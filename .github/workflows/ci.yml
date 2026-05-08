@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: bash -n oc
-        run: bash -n ./oc
+      - name: bash -n clawctl
+        run: bash -n ./clawctl
       - name: bash -n install/install.sh
         run: bash -n ./install/install.sh
