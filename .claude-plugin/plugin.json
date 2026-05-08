@@ -1,0 +1,19 @@
+{
+  "name": "clawctl",
+  "version": "0.1.0",
+  "description": "kubectl-style slash commands and a GitHub loop-back skill for the openclaw agent gateway. Bundled with the clawctl wrapper in the same repo.",
+  "author": {
+    "name": "Thomas Stagl",
+    "url": "https://tomstagl.com"
+  },
+  "homepage": "https://github.com/tomstagl/clawctl",
+  "repository": "https://github.com/tomstagl/clawctl",
+  "license": "MIT",
+  "keywords": [
+    "openclaw",
+    "agents",
+    "kubectl-style",
+    "observability",
+    "github-loopback"
+  ]
+}

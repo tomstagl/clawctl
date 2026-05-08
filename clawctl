@@ -1,0 +1,493 @@
+#!/usr/bin/env bash
+# clawctl — openclaw client (kubectl-style).
+# Phases A (transport), B-1 (response redaction), C (claim verification),
+# and lightweight Phase E (clawctl trace) live here.
+
+set -euo pipefail
+
+CLAWCTL_HOST="${CLAWCTL_HOST:-}"
+CLAWCTL_KEYCHAIN_SERVICE="${CLAWCTL_KEYCHAIN_SERVICE:-openclaw-gateway-token}"
+CLAWCTL_TIMEOUT="${CLAWCTL_TIMEOUT:-60}"
+CLAWCTL_CACHE_DIR="${CLAWCTL_CACHE_DIR:-$HOME/.cache/clawctl}"
+CLAWCTL_MODELS_TTL="${CLAWCTL_MODELS_TTL:-60}"
+CLAWCTL_NO_REDACT="${CLAWCTL_NO_REDACT:-0}"
+CLAWCTL_SSH_HOST="${CLAWCTL_SSH_HOST:-}"
+
+mkdir -p "$CLAWCTL_CACHE_DIR"
+
+#───────────────────────────────────────────────────────────────────────────────
+# helpers
+#───────────────────────────────────────────────────────────────────────────────
+
+_require_host() {
+  if [ -z "$CLAWCTL_HOST" ]; then
+    echo "clawctl: CLAWCTL_HOST not set. Export it (e.g. export CLAWCTL_HOST=http://your-openclaw-host:18789)." >&2
+    exit 2
+  fi
+}
+
+_require_ssh_host() {
+  if [ -z "$CLAWCTL_SSH_HOST" ]; then
+    echo "clawctl: CLAWCTL_SSH_HOST not set. Export it (e.g. export CLAWCTL_SSH_HOST=user@host)." >&2
+    exit 2
+  fi
+}
+
+_token() {
+  security find-generic-password -s "$CLAWCTL_KEYCHAIN_SERVICE" -a "$USER" -w
+}
+
+# W3C traceparent: 00-<32-hex-trace-id>-<16-hex-span-id>-01
+_traceparent() {
+  printf '00-%s-%s-01' "$(openssl rand -hex 16)" "$(openssl rand -hex 8)"
+}
+
+_trace_id_of() { printf '%s' "$1" | cut -d- -f2; }
+
+# Redact known secret patterns from stdin → stdout.
+# Writes hit-kind summary to stderr and appends an audit entry on every match.
+# Exits 0 always (redaction is not a transport failure).
+_redact() {
+  if [ "$CLAWCTL_NO_REDACT" = "1" ]; then cat; return 0; fi
+
+  local agent="${1:-?}"
+  local gw_token=""
+  gw_token="$(_token 2>/dev/null || true)"
+
+  AGENT="$agent" GW_TOKEN="$gw_token" AUDIT="$CLAWCTL_CACHE_DIR/last-redaction" \
+  perl -e '
+    my $text = do { local $/; <STDIN> };
+    my %pat = (
+      dt0c01    => qr/dt0c01\.[A-Za-z0-9_.\-]{20,}/,
+      dt0s16    => qr/dt0s16\.[A-Za-z0-9_.\-]{20,}/,
+      gh_token  => qr/gh[psoru]_[A-Za-z0-9]{30,}/,
+      aws_akid  => qr/AKIA[0-9A-Z]{16}/,
+      jwt       => qr/eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+/,
+      brave     => qr/BSA[A-Za-z0-9_\-]{25,}/,
+    );
+    my %hits;
+    for my $kind (sort keys %pat) {
+      my $re = $pat{$kind};
+      $hits{$kind}++ while $text =~ s/$re/"<REDACTED:$kind:".substr($&,0,11)."\xE2\x80\xA6>"/e;
+    }
+    # gateway-token literal (length-bounded)
+    my $gw = $ENV{GW_TOKEN} // "";
+    if (length($gw) >= 16) {
+      my $q = quotemeta($gw);
+      $hits{gw_token}++ while $text =~ s/$q/"<REDACTED:gw_token:".substr($gw,0,6)."\xE2\x80\xA6>"/e;
+    }
+    print STDOUT $text;
+    if (%hits) {
+      my $ts = `date -u +%FT%TZ`; chomp $ts;
+      my $kinds = join(",", sort keys %hits);
+      my $agent = $ENV{AGENT} // "?";
+      print STDERR "WARNING: redacted secret pattern(s): $kinds (agent=$agent). Likely R-11 violation upstream; consider rotating the matching credential.\n";
+      open(my $fh, ">>", $ENV{AUDIT}) or exit 0;
+      print $fh "$ts agent=$agent kinds=$kinds\n";
+      close($fh);
+    }
+  '
+}
+
+# Parse a gateway error body and print "<code>: <message>" to stderr if recognizable.
+_explain_http_error() {
+  local code="$1" body_file="$2"
+  if [ -s "$body_file" ]; then
+    # OpenAI-style { "error": { "code": "...", "message": "..." } }
+    local err_code err_msg
+    err_code=$(jq -r '.error.code // .error.type // .code // empty' "$body_file" 2>/dev/null || true)
+    err_msg=$(jq -r  '.error.message // .message // empty' "$body_file" 2>/dev/null || true)
+    if [ -n "$err_code" ] || [ -n "$err_msg" ]; then
+      echo "gateway error: HTTP $code ${err_code:+[$err_code] }${err_msg}" >&2
+      return
+    fi
+  fi
+  echo "gateway error: HTTP $code (no structured body)" >&2
+}
+
+# Slug validation against a 60s-cached `clawctl models` response.
+_models_cache() {
+  local cache="$CLAWCTL_CACHE_DIR/models.json"
+  local age_sec=999999
+  if [ -f "$cache" ]; then
+    age_sec=$(( $(date +%s) - $(stat -f %m "$cache" 2>/dev/null || echo 0) ))
+  fi
+  if [ "$age_sec" -gt "$CLAWCTL_MODELS_TTL" ]; then
+    if curl --silent --show-error --fail-with-body \
+        --max-time "$CLAWCTL_TIMEOUT" \
+        --retry 2 --retry-connrefused --retry-delay 1 --retry-all-errors \
+        -H "Authorization: Bearer $(_token)" \
+        -H "Accept: application/json" \
+        -o "$cache.tmp" \
+        "${CLAWCTL_HOST}/v1/models" >/dev/null 2>&1; then
+      mv "$cache.tmp" "$cache"
+    else
+      rm -f "$cache.tmp"
+      [ -f "$cache" ] || return 1
+    fi
+  fi
+  cat "$cache"
+}
+
+# Extract bare slug list (after "openclaw/" prefix) from cached models.
+_known_agents() {
+  _models_cache | jq -r '.data[].id' 2>/dev/null \
+    | sed -n 's|^openclaw/||p' \
+    | sort -u
+}
+
+_validate_agent() {
+  local agent="$1"
+  # Always accept "default"; otherwise require it to match a known slug.
+  if [ "$agent" = "default" ]; then return 0; fi
+  local known
+  if ! known=$(_known_agents 2>/dev/null) || [ -z "$known" ]; then
+    # Cache unavailable — fail open with a warning.
+    echo "warning: clawctl models cache unavailable, skipping slug validation for '$agent'" >&2
+    return 0
+  fi
+  if printf '%s\n' "$known" | grep -Fxq "$agent"; then return 0; fi
+  echo "clawctl: unknown agent '$agent'" >&2
+  echo "valid agents:" >&2
+  printf '%s\n' "$known" | awk '{print "  "$0}' >&2
+  return 2
+}
+
+# Call /v1/chat/completions; returns body on stdout, prints trace-id + errors on stderr.
+# args: <agent> <stream:bool> <session_key_or_empty> <text>
+_chat() {
+  local agent="$1" stream="$2" session="$3" text="$4"
+  local tp body http_code curl_exit
+  tp="$(_traceparent)"
+  echo "trace-id: $(_trace_id_of "$tp")" >&2
+
+  body="$(mktemp)"
+  trap 'rm -f "$body"' RETURN
+
+  local payload
+  if [ -n "$session" ]; then
+    payload=$(jq -nc \
+      --arg model "openclaw/${agent}" \
+      --arg content "$text" \
+      --arg user "$session" \
+      --argjson stream "$stream" \
+      '{model:$model, stream:$stream, user:$user, messages:[{role:"user", content:$content}]}')
+  else
+    payload=$(jq -nc \
+      --arg model "openclaw/${agent}" \
+      --arg content "$text" \
+      --argjson stream "$stream" \
+      '{model:$model, stream:$stream, messages:[{role:"user", content:$content}]}')
+  fi
+
+  set +e
+  http_code=$(curl --silent --show-error --fail-with-body \
+    --max-time "$CLAWCTL_TIMEOUT" \
+    -H "Authorization: Bearer $(_token)" \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    -H "traceparent: $tp" \
+    -o "$body" \
+    --write-out '%{http_code}' \
+    -d "$payload" \
+    "${CLAWCTL_HOST}/v1/chat/completions")
+  curl_exit=$?
+  set -e
+
+  if [ "$curl_exit" -ne 0 ]; then
+    case "$curl_exit" in
+      6)  echo "clawctl: DNS resolution failed for ${CLAWCTL_HOST}" >&2 ;;
+      7)  echo "clawctl: connection refused: ${CLAWCTL_HOST}" >&2 ;;
+      28) echo "clawctl: timeout (${CLAWCTL_TIMEOUT}s) calling ${CLAWCTL_HOST}" >&2 ;;
+      22) _explain_http_error "$http_code" "$body" ;;
+      *)  echo "clawctl: curl exit $curl_exit (HTTP $http_code)" >&2 ;;
+    esac
+    return "$curl_exit"
+  fi
+
+  cat "$body"
+}
+
+#───────────────────────────────────────────────────────────────────────────────
+# subcommands
+#───────────────────────────────────────────────────────────────────────────────
+
+cmd="${1:-help}"; shift || true
+
+case "$cmd" in
+
+  health)
+    _require_host
+    curl --silent --show-error --fail-with-body \
+      --max-time "$CLAWCTL_TIMEOUT" \
+      --retry 2 --retry-connrefused --retry-delay 1 --retry-all-errors \
+      "${CLAWCTL_HOST}/health" | jq .
+    ;;
+
+  models)
+    _require_host
+    _models_cache | jq .
+    ;;
+
+  msg|stream)
+    _require_host
+    is_stream=false
+    [ "$cmd" = "stream" ] && is_stream=true
+
+    session=""
+    while [ "${1:-}" != "" ]; do
+      case "$1" in
+        -s|--session) session="${2:-}"; shift 2 ;;
+        -s=*)         session="${1#*=}"; shift ;;
+        --session=*)  session="${1#*=}"; shift ;;
+        --)           shift; break ;;
+        -*)
+          echo "clawctl $cmd: unknown flag '$1'" >&2; exit 2 ;;
+        *) break ;;
+      esac
+    done
+
+    if [ "${1:-}" = "" ]; then
+      echo "usage: clawctl $cmd [-s <session-key>] <agent> [<text>]   (text from stdin if omitted)" >&2
+      echo "       agent = 'default' or a specific agent slug" >&2
+      exit 2
+    fi
+    agent="$1"; shift
+    _validate_agent "$agent" || exit $?
+
+    if [ "$#" -gt 0 ]; then text="$*"; else text="$(cat)"; fi
+
+    if [ "$is_stream" = "true" ]; then
+      raw="$(mktemp)"
+      trap 'rm -f "$raw"' EXIT
+      _chat "$agent" true "$session" "$text" > "$raw" || exit $?
+      # SSE → plain text. Buffer fully, then redact (boundary-safe), then emit.
+      python3 - "$raw" <<'PY' | _redact "$agent"
+import json, sys
+content = []
+err = None
+with open(sys.argv[1]) as fh:
+    for line in fh:
+        line = line.rstrip("\n")
+        if line.startswith("event:") and "error" in line:
+            err = line
+            continue
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].lstrip()
+        if payload == "[DONE]":
+            break
+        try:
+            obj = json.loads(payload)
+        except Exception:
+            continue
+        choices = obj.get("choices") or []
+        if not choices:
+            if "error" in obj:
+                err = json.dumps(obj["error"])
+            continue
+        delta = choices[0].get("delta") or choices[0].get("message") or {}
+        chunk = delta.get("content") or ""
+        if chunk:
+            content.append(chunk)
+sys.stdout.write("".join(content))
+if err:
+    sys.stderr.write(f"stream error: {err}\n")
+    sys.exit(1)
+PY
+      stream_exit=${PIPESTATUS[0]}
+      printf '\n'
+      [ "$stream_exit" -eq 0 ] || exit "$stream_exit"
+    else
+      _chat "$agent" false "$session" "$text" \
+        | jq -r '.choices[0].message.content // (.error // .) | (if type=="object" then tostring else . end)' \
+        | _redact "$agent"
+      printf '\n'
+    fi
+    ;;
+
+  raw)
+    _require_host
+    method="${1:-GET}"; path="${2:-/health}"; shift 2 || true
+    tp="$(_traceparent)"
+    echo "trace-id: $(_trace_id_of "$tp")" >&2
+    retry_args=()
+    if [ "$method" = "GET" ]; then
+      retry_args=(--retry 2 --retry-connrefused --retry-delay 1 --retry-all-errors)
+    fi
+    curl --silent --show-error --fail-with-body \
+      --max-time "$CLAWCTL_TIMEOUT" \
+      "${retry_args[@]}" \
+      -X "$method" "${CLAWCTL_HOST}${path}" \
+      -H "Authorization: Bearer $(_token)" \
+      -H "Accept: application/json" \
+      -H "traceparent: $tp" \
+      "$@"
+    ;;
+
+  cli)
+    # Run an openclaw CLI command on the host with proper PATH and preserved argv.
+    # If oc-remote is installed on the host, prefer it for clean argv handling.
+    _require_ssh_host
+    if ssh -o BatchMode=yes -o ConnectTimeout=5 "$CLAWCTL_SSH_HOST" 'test -x /usr/local/bin/oc-remote' 2>/dev/null; then
+      ssh "$CLAWCTL_SSH_HOST" -- /usr/local/bin/oc-remote "$@"
+    else
+      # Fallback: shell-escape each arg ourselves.
+      esc=""
+      for a in "$@"; do
+        esc+=" $(printf %q "$a")"
+      done
+      ssh "$CLAWCTL_SSH_HOST" "export PATH=\$HOME/.npm-global/bin:\$PATH; openclaw$esc"
+    fi
+    ;;
+
+  verify)
+    sub="${1:-}"; shift || true
+    case "$sub" in
+      commit)
+        hash="${1:-}"
+        [ -z "$hash" ] && { echo "usage: clawctl verify commit <hash>" >&2; exit 2; }
+        if t=$(git cat-file -t "$hash" 2>/dev/null) && [ "$t" = "commit" ]; then
+          echo "verified: commit $hash"
+          exit 0
+        fi
+        echo "unverified: commit $hash not found in $(git rev-parse --show-toplevel 2>/dev/null || pwd)" >&2
+        exit 1
+        ;;
+      pr)
+        spec="${1:-}"
+        [ -z "$spec" ] && { echo "usage: clawctl verify pr <repo>#<num>  (repo=owner/name)" >&2; exit 2; }
+        repo="${spec%%#*}"; num="${spec##*#}"
+        if [ "$repo" = "$spec" ] || [ -z "$num" ]; then
+          echo "usage: clawctl verify pr <repo>#<num>" >&2; exit 2
+        fi
+        out=$(gh pr view "$num" --repo "$repo" --json state,url,title 2>/dev/null) || {
+          echo "unverified: PR $repo#$num not accessible" >&2; exit 1
+        }
+        echo "verified: $(printf '%s' "$out" | jq -r '"\(.state) — \(.title) — \(.url)"')"
+        exit 0
+        ;;
+      issue)
+        spec="${1:-}"
+        [ -z "$spec" ] && { echo "usage: clawctl verify issue <repo>#<num>" >&2; exit 2; }
+        repo="${spec%%#*}"; num="${spec##*#}"
+        if [ "$repo" = "$spec" ] || [ -z "$num" ]; then
+          echo "usage: clawctl verify issue <repo>#<num>" >&2; exit 2
+        fi
+        out=$(gh issue view "$num" --repo "$repo" --json state,url,title 2>/dev/null) || {
+          echo "unverified: issue $repo#$num not accessible" >&2; exit 1
+        }
+        echo "verified: $(printf '%s' "$out" | jq -r '"\(.state) — \(.title) — \(.url)"')"
+        exit 0
+        ;;
+      file)
+        path="${1:-}"; ref="${2:-}"
+        [ -z "$path" ] && { echo "usage: clawctl verify file <path> [<ref>]" >&2; exit 2; }
+        if [ -n "$ref" ]; then
+          if git cat-file -e "${ref}:${path}" 2>/dev/null; then
+            echo "verified: $path @ $ref"; exit 0
+          fi
+          echo "unverified: $path not present at $ref" >&2; exit 1
+        else
+          if [ -e "$path" ]; then
+            echo "verified: $path (working tree)"; exit 0
+          fi
+          echo "unverified: $path not present in working tree" >&2; exit 1
+        fi
+        ;;
+      ""|help|-h|--help)
+        cat <<EOF >&2
+clawctl verify <kind> <args>
+  commit <hash>             — git cat-file -t == commit
+  pr     <owner/name>#<n>   — gh pr view returns
+  issue  <owner/name>#<n>   — gh issue view returns
+  file   <path> [<ref>]     — file exists in working tree (or at ref)
+
+Exit codes: 0 verified, 1 not found, 2 usage/ambiguous.
+EOF
+        exit 2
+        ;;
+      *)
+        echo "clawctl verify: unknown kind '$sub' (try 'clawctl verify help')" >&2; exit 2 ;;
+    esac
+    ;;
+
+  trace)
+    tid="${1:-}"
+    [ -z "$tid" ] && { echo "usage: clawctl trace <trace-id-32-hex>" >&2; exit 2; }
+    JAEGER_UI="${CLAWCTL_JAEGER_UI:-}"
+    if [ -z "$JAEGER_UI" ]; then
+      echo "clawctl: CLAWCTL_JAEGER_UI not set. Export your Jaeger base URL (e.g. http://jaeger:16686)." >&2
+      exit 2
+    fi
+    echo "trace-id: $tid"
+    echo "UI:       $JAEGER_UI/trace/$tid"
+    echo
+    api="$JAEGER_UI/jaeger/api/traces/$tid"
+    if curl -sS --max-time 5 "$api" 2>/dev/null | python3 -c '
+import sys, json
+try:
+    d=json.load(sys.stdin)
+except Exception:
+    sys.exit(2)
+errs=d.get("errors") or []
+if errs:
+    print("Jaeger:", errs[0].get("msg","unknown"))
+    sys.exit(1)
+traces=d.get("data") or []
+if not traces:
+    print("Jaeger: no spans for this trace")
+    sys.exit(1)
+t=traces[0]
+spans=t.get("spans",[])
+procs=t.get("processes",{})
+print(f"Spans: {len(spans)}")
+for s in spans[:30]:
+    op=s.get("operationName","?")
+    dur=s.get("duration",0)/1000
+    p=procs.get(s.get("processID",""),{})
+    svc=p.get("serviceName","?")
+    print(f"  {svc:<24s} {op:<40s} {dur:>7.0f}ms")
+sys.exit(0)
+'; then :; fi
+    ;;
+
+  help|--help|-h|"")
+    cat <<EOF
+clawctl — openclaw client (host: ${CLAWCTL_HOST:-<unset>})
+
+  clawctl health                              gateway liveness
+  clawctl models                              list registered agents (60s cache)
+  clawctl msg [-s SESSION] AGENT [TEXT]       chat with agent; stdin if no text
+  clawctl stream [-s SESSION] AGENT [TEXT]    same, SSE; output buffered + redacted
+  clawctl raw METHOD PATH [curl-args]         arbitrary call with auth + traceparent
+  clawctl cli SUBCOMMAND...                   run \`openclaw …\` over SSH on host
+  clawctl verify KIND ARGS                    R-2 claim verification (see 'clawctl verify help')
+  clawctl trace TRACE-ID                      lookup hint for a trace id
+
+Required env:
+  CLAWCTL_HOST              gateway URL (e.g. http://your-openclaw-host:18789)
+  CLAWCTL_SSH_HOST          user@host for the gateway machine (only required for 'clawctl cli')
+  CLAWCTL_JAEGER_UI         Jaeger base URL (only required for 'clawctl trace')
+
+Optional env:
+  CLAWCTL_KEYCHAIN_SERVICE  keychain service for the bearer token (default: openclaw-gateway-token)
+  CLAWCTL_TIMEOUT           per-call timeout in seconds (default 60)
+  CLAWCTL_NO_REDACT=1       disable client-side response redaction (NOT recommended)
+  CLAWCTL_MODELS_TTL        seconds to cache /v1/models (default 60)
+
+Exit codes for transport calls:
+  0   ok
+  6   DNS resolution failed
+  7   connection refused
+  22  HTTP 4xx/5xx (body printed; reason on stderr)
+  28  timeout
+  2   usage error
+EOF
+    ;;
+
+  *)
+    echo "clawctl: unknown command '$cmd' (try 'clawctl help')" >&2
+    exit 2
+    ;;
+esac
