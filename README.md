@@ -29,13 +29,6 @@ If you run a self-hosted openclaw fleet and you've ever wanted "the kubectl of a
 
 ## Install
 
-### Homebrew (recommended)
-
-```bash
-brew tap tomstagl/clawctl
-brew install oc
-```
-
 ### curl
 
 ```bash
