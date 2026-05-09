@@ -2,3 +2,12 @@
 *.bak
 *.bak.*
 .cache/
+
+# Go build artifacts. `go build ./cmd/clawctl` from the repo root currently
+# overwrites the bash `clawctl` entrypoint — that collision is resolved when
+# US-031 renames the bash script to clawctl.bash. Until then, contributors
+# should `go build -o /tmp/clawctl ./cmd/clawctl` (or similar) to avoid
+# clobbering the tracked file.
+/cmd/clawctl/clawctl
+*.test
+
