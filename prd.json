@@ -30,7 +30,7 @@
         "docs/envelope.md documents versioning policy (additive within v1; breaking bumps to v2)"
       ],
       "priority": 2,
-      "passes": false,
+      "passes": true,
       "notes": ""
     },
     {
