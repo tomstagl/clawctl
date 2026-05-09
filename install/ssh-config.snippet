@@ -1,0 +1,22 @@
+# BEGIN clawctl
+# Managed by clawctl. Re-running install/ssh-setup.sh is idempotent — to
+# remove this block, delete everything between BEGIN clawctl and END clawctl.
+#
+# Why: `clawctl cli` calls SSH out to the gateway host on every mutating
+# operation. Without ControlMaster the TCP handshake + auth happens every
+# time. With these settings the first call opens a multiplexed connection
+# and the next 10 minutes of calls reuse it — typical second-call latency
+# drops from ~700ms to <50ms.
+#
+# Scope is `Host *` because CLAWCTL_SSH_HOST varies per user (alias, FQDN,
+# or user@host) and we cannot predict what string they will use. The settings
+# are non-invasive: ControlMaster=auto only opens a master if none exists,
+# ControlPath is namespaced under ~/.ssh/cm-, and ControlPersist=10m bounds
+# any stray sockets. If you already manage ControlMaster yourself, remove
+# this block — your existing config wins precedence by being earlier in the
+# file.
+Host *
+    ControlMaster auto
+    ControlPath ~/.ssh/cm-%r@%h:%p
+    ControlPersist 10m
+# END clawctl

@@ -52,6 +52,22 @@ cd oc
 
 The installer copies `clawctl` to `~/.local/bin/oc` and prints a PATH check. It does not touch your Keychain — you store the bearer token yourself (see below).
 
+### SSH connection reuse (recommended for `clawctl cli`)
+
+`clawctl cli` shells out over SSH on every invocation. Without connection multiplexing, every call pays the TCP+auth handshake — typically 500–800ms before any work happens. The repo ships an ssh-config snippet that enables ControlMaster reuse so the second and subsequent calls within 10 minutes reuse the master connection.
+
+```bash
+./install/ssh-setup.sh
+```
+
+What it does:
+
+- Appends a fenced `# BEGIN clawctl` / `# END clawctl` block to `~/.ssh/config` containing `ControlMaster auto`, `ControlPath ~/.ssh/cm-%r@%h:%p`, and `ControlPersist 10m`.
+- Idempotent: re-running replaces the block in place, never duplicates it. Pre-existing config outside the markers is left alone.
+- Creates `~/.ssh` with mode `0700` and the config with mode `0600` if missing.
+
+Inspect [`install/ssh-config.snippet`](install/ssh-config.snippet) before running if you already manage `ControlMaster` yourself — your existing settings win precedence by being earlier in the file, but you may prefer to merge by hand.
+
 ## Setup
 
 One required environment variable. Export it in `~/.zshrc` (or equivalent):
@@ -60,11 +76,18 @@ One required environment variable. Export it in `~/.zshrc` (or equivalent):
 export CLAWCTL_HOST="http://your-openclaw-host:18789"
 ```
 
+If you plan to use `clawctl cli`, also set `CLAWCTL_SSH_HOST` to whatever you already use to `ssh` to the gateway — an alias from `~/.ssh/config`, an FQDN, or a `user@host` pair:
+
+```bash
+export CLAWCTL_SSH_HOST="ops@your-openclaw-host"   # only needed for `clawctl cli`
+```
+
 Optional knobs — sensible defaults exist:
 
 | Variable                | Default                         | Purpose                                                  |
 | ----------------------- | ------------------------------- | -------------------------------------------------------- |
 | `CLAWCTL_HOST`               | _required_                      | Gateway URL                                              |
+| `CLAWCTL_SSH_HOST`           | _unset_                         | SSH target for `clawctl cli` (alias, FQDN, or `user@host`) |
 | `CLAWCTL_KEYCHAIN_SERVICE`   | `openclaw-gateway-token`        | macOS Keychain entry holding the bearer token            |
 | `CLAWCTL_TIMEOUT`            | `60`                            | Per-call timeout (seconds)                               |
 | `CLAWCTL_CACHE_DIR`          | `~/.cache/clawctl`                   | Where the models cache + redaction audit live            |

@@ -22,3 +22,10 @@ Status: done
 Files changed: test/fixtures/envelope/{happy,error,redacted}.json, test/fixtures/envelope/streaming.ndjson, test/validate-fixtures.sh, prd.json
 Notes: Validator wraps `npx ajv-cli@5 --spec=draft2020`, splits NDJSON line-by-line, then layers structural guards (>=3 chunks, terminal tool_response, non-empty redactions[]). Local run: 10/10 checks pass, exit 0. Negative spot-check (envelope_version=2) still fails as expected. Streaming fixture uses one shared traceparent across chunks + terminal — matches design principle 3 (one trace per tool call). CI is unaffected (validator lives under test/, which shellcheck ignores).
 ---
+
+## US-004: Add ssh-config snippet for ControlMaster
+Iteration: 2026-05-09T19:51:32Z
+Status: done
+Files changed: install/ssh-config.snippet (new), install/ssh-setup.sh (new), README.md, prd.json
+Notes: Snippet uses Host * because CLAWCTL_SSH_HOST is per-user and unpredictable; ControlPersist=10m bounds stray sockets. Setup script is idempotent via BEGIN/END markers and tested across 3 reruns. Shellcheck clean at severity=warning.
+---
