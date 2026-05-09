@@ -1,0 +1,496 @@
+{
+  "project": "clawctl",
+  "branchName": "ralph/clawctl-ready-for-usage",
+  "description": "Make clawctl ready for usage: review and harden the bash MVP's transport choices, define a versioned JSON-schema tool envelope, then ship a typed Go binary with an MCP server frontend so Claude Code, Codex, and other local LLMs can call openclaw agents as typed tools.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Write transport decision matrix doc",
+      "description": "As a contributor, I want a written matrix of which transport (HTTP API, SSH, local CLI) is correct for which clawctl operation, so future subcommands don't get implemented over the wrong transport.",
+      "acceptanceCriteria": [
+        "docs/transport-decisions.md exists",
+        "Matrix has one row per existing subcommand: health, models, msg, stream, raw, cli, verify, trace",
+        "Each row lists: operation, chosen transport, rationale, alternative considered, exit-code contract",
+        "Each row cites the failure mode the chosen transport avoids",
+        "Markdown lints clean"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Define v1 JSON-schema tool envelope",
+      "description": "As a local LLM caller, I need a typed envelope shape so I can register openclaw agents as tools and reason structurally about their outputs.",
+      "acceptanceCriteria": [
+        "schemas/envelope.v1.json defines ToolRequest, ToolResponse, ToolStreamChunk, ToolError",
+        "Envelope carries: agent, session_id?, traceparent, input, tool_choice?, redactions[], usage, finish_reason, envelope_version: '1'",
+        "ToolError.code is an enum mapping gateway HTTP errors (transport.connection_refused, gateway.rate_limited, agent.unknown, redaction.applied, etc.)",
+        "Schema validates with a standard JSON Schema validator (e.g. ajv) against an empty fixture",
+        "docs/envelope.md documents versioning policy (additive within v1; breaking bumps to v2)"
+      ],
+      "priority": 2,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Add envelope test fixtures",
+      "description": "As a developer, I want canonical envelope fixtures (happy, streaming, error, redacted) so every emitter can be parity-tested against the schema.",
+      "acceptanceCriteria": [
+        "test/fixtures/envelope/happy.json validates against schemas/envelope.v1.json",
+        "test/fixtures/envelope/streaming.ndjson contains 3+ ToolStreamChunks ending in ToolResponse, all valid",
+        "test/fixtures/envelope/error.json is a valid ToolError",
+        "test/fixtures/envelope/redacted.json is a ToolResponse with at least one entry in redactions[]",
+        "test/validate-fixtures.sh runs all fixtures through the validator and exits 0",
+        "Tests pass"
+      ],
+      "priority": 3,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Add ssh-config snippet for ControlMaster",
+      "description": "As an operator, I want an installable ssh-config snippet enabling ControlMaster reuse for CLAWCTL_SSH_HOST so SSH-based subcommands are fast.",
+      "acceptanceCriteria": [
+        "install/ssh-config.snippet sets ControlMaster auto, ControlPath ~/.ssh/cm-%r@%h:%p, ControlPersist 10m",
+        "install/install.sh (or a new install/ssh-setup.sh) appends the snippet to ~/.ssh/config idempotently when invoked",
+        "README.md documents the install step and how to set CLAWCTL_SSH_HOST",
+        "Shellcheck passes on any new shell script"
+      ],
+      "priority": 4,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Make oc-remote a hard requirement in `clawctl cli`",
+      "description": "As an operator, I want `clawctl cli` to refuse to run when oc-remote is absent on the host instead of falling back to shell-string interpolation, so the SSH path is not an injection surface.",
+      "acceptanceCriteria": [
+        "The `printf %q`-into-string fallback branch is removed from `clawctl cli` in clawctl",
+        "When oc-remote is missing on the host, `clawctl cli` exits 2 with a remediation message pointing at install instructions",
+        "All SSH invocations pass argv via `--` to oc-remote (string slice, never concatenated)",
+        "test/cli-hardening.sh covers: oc-remote present (mocked), oc-remote absent (mocked), argv with spaces and quotes",
+        "Shellcheck passes",
+        "Tests pass"
+      ],
+      "priority": 5,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Add --envelope flag to bash `clawctl msg`",
+      "description": "As a local LLM caller, I want `clawctl msg --envelope AGENT TEXT` to emit a v1 ToolResponse JSON document on stdout.",
+      "acceptanceCriteria": [
+        "`clawctl msg --envelope` outputs valid ToolResponse JSON validated against schemas/envelope.v1.json",
+        "Envelope includes: agent, traceparent, input, usage, finish_reason, envelope_version: '1'",
+        "Plain `clawctl msg` (no flag) preserves current text-only output for backwards compatibility",
+        "test/envelope-msg.sh validates the output against the schema using a fixture-mode gateway or recorded response",
+        "Shellcheck passes",
+        "Tests pass"
+      ],
+      "priority": 6,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Add --envelope flag to bash `clawctl stream`",
+      "description": "As a local LLM caller, I want `clawctl stream --envelope AGENT TEXT` to emit one NDJSON ToolStreamChunk per line followed by a final ToolResponse.",
+      "acceptanceCriteria": [
+        "`clawctl stream --envelope` emits one ToolStreamChunk per line on stdout",
+        "Final line is a ToolResponse with finish_reason set",
+        "Each chunk validates against schemas/envelope.v1.json",
+        "Plain `clawctl stream` (no flag) preserves current text-only buffered output",
+        "test/envelope-stream.sh exercises a recorded multi-chunk SSE response and validates each line",
+        "Shellcheck passes",
+        "Tests pass"
+      ],
+      "priority": 7,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Move redaction-hit reporting into envelope.redactions[]",
+      "description": "As a local LLM caller, I want redaction events to appear in the envelope (not only on stderr) so I can detect that a redaction happened without parsing logs.",
+      "acceptanceCriteria": [
+        "When --envelope is set, redaction hits are surfaced in the envelope's redactions[] array with kind and offset_hint",
+        "Existing stderr WARNING line is still emitted (for human users)",
+        "Existing audit-file write to $CLAWCTL_CACHE_DIR/last-redaction is unchanged",
+        "test/envelope-redacted.sh feeds known-secret-shaped strings through and asserts redactions[] populates",
+        "Shellcheck passes",
+        "Tests pass"
+      ],
+      "priority": 8,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Audit exit codes across all subcommands",
+      "description": "As a local LLM caller, I need every subcommand's exit code to follow the documented contract so I can branch on it deterministically.",
+      "acceptanceCriteria": [
+        "Every case branch in clawctl exits with a code from the table in `clawctl help` (or the table is updated with rationale)",
+        "test/exit-codes.sh table-tests each subcommand × failure-mode pair against the help table",
+        "Failure modes covered: missing env var, connection refused, timeout, HTTP 4xx/5xx, usage error, unknown command",
+        "Shellcheck passes",
+        "Tests pass"
+      ],
+      "priority": 9,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Write Go-vs-Rust language-pick decision doc",
+      "description": "As the team, we need to pick Go or Rust for the typed binary based on concrete criteria so the rewrite has a defensible rationale.",
+      "acceptanceCriteria": [
+        "docs/typed-binary-language.md compares Go vs Rust on: MCP SDK maturity, single-file static binary size, cross-compile to darwin/linux, HTTP+SSE client ergonomics, ssh client library quality, team familiarity",
+        "Decision is recorded with the criterion that broke the tie",
+        "Default recommendation is Go unless the doc justifies otherwise",
+        "Markdown lints clean"
+      ],
+      "priority": 10,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "Scaffold cmd/clawctl/ Go module",
+      "description": "As a developer, I want a minimal Go module under cmd/clawctl/ that compiles and prints help, with env-var loading and keychain access wired up.",
+      "acceptanceCriteria": [
+        "go.mod at repo root with module path and Go 1.22+ toolchain",
+        "cmd/clawctl/main.go compiles to a single static binary via `go build ./cmd/clawctl`",
+        "Binary prints help text matching the bash version's structure when run with no args, --help, or `help`",
+        "internal/config package loads CLAWCTL_HOST, CLAWCTL_SSH_HOST, CLAWCTL_TIMEOUT, CLAWCTL_KEYCHAIN_SERVICE, CLAWCTL_NO_REDACT, CLAWCTL_MODELS_TTL, CLAWCTL_JAEGER_UI, CLAWCTL_LOG with same defaults",
+        "internal/keychain package shells out to `security find-generic-password` to read the bearer token",
+        "go vet ./... passes; go test ./... passes (even with zero test files)",
+        "Tests pass"
+      ],
+      "priority": 11,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "Implement v1 envelope types in Go with embedded schema",
+      "description": "As a developer, I want Go structs for ToolRequest/ToolResponse/ToolStreamChunk/ToolError plus the schema embedded via go:embed so the binary can self-validate.",
+      "acceptanceCriteria": [
+        "internal/envelope package defines ToolRequest, ToolResponse, ToolStreamChunk, ToolError structs with json tags matching schemas/envelope.v1.json field names",
+        "schemas/envelope.v1.json is embedded via go:embed",
+        "envelope.Validate(any) returns nil for valid documents, an error for invalid ones",
+        "Unit tests cover: happy ToolResponse, streaming chunk, error, redacted, all validating against the embedded schema",
+        "go vet ./... passes; go test ./... passes",
+        "Tests pass"
+      ],
+      "priority": 12,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Implement Go `clawctl health`",
+      "description": "As a developer, I want the Go binary's `clawctl health` to call /health and produce byte-identical JSON to the bash version.",
+      "acceptanceCriteria": [
+        "internal/transport/api package issues an authenticated GET /health with retries (--retry 2 equivalent)",
+        "`clawctl health` in the Go binary prints the response body via jq-style pretty-print",
+        "Errors map to the documented exit codes (6, 7, 22, 28, 2)",
+        "test/parity-health.sh runs both bash and Go binaries against a mock server and diffs stdout/stderr/exit",
+        "Tests pass"
+      ],
+      "priority": 13,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "Implement Go `clawctl models` with TTL cache",
+      "description": "As a developer, I want the Go binary's `clawctl models` to cache /v1/models for CLAWCTL_MODELS_TTL seconds and produce parity output.",
+      "acceptanceCriteria": [
+        "Cache file under $CLAWCTL_CACHE_DIR named to match the bash convention",
+        "Cache is invalidated when older than CLAWCTL_MODELS_TTL seconds",
+        "test/parity-models.sh runs both binaries against a mock server and asserts identical output and identical cache hit/miss behavior",
+        "Unit test covers the cache TTL boundary",
+        "Tests pass"
+      ],
+      "priority": 14,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "Implement Go `clawctl raw` with traceparent",
+      "description": "As a developer, I want the Go binary's `clawctl raw METHOD PATH` to issue arbitrary auth'd calls with a generated W3C traceparent header.",
+      "acceptanceCriteria": [
+        "internal/trace package generates a valid W3C traceparent (00-<32-hex>-<16-hex>-01)",
+        "`clawctl raw` prints `trace-id: <id>` to stderr and the response body to stdout",
+        "Retries applied only for GET requests (--retry 2 equivalent)",
+        "Unit test for traceparent generation: 32+16 hex pattern, version 00, flag 01",
+        "test/parity-raw.sh diffs Go vs bash output for GET, POST, and an error response",
+        "Tests pass"
+      ],
+      "priority": 15,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-016",
+      "title": "Implement Go SSE parser with fuzz seeds",
+      "description": "As a developer, I want a robust SSE parser in Go that handles byte-boundary splits, partial UTF-8, and missing [DONE] markers without losing chunks.",
+      "acceptanceCriteria": [
+        "internal/sse package exposes a Parser that yields events from an io.Reader",
+        "Parser handles: split-mid-event, split-mid-utf8-codepoint, missing terminal [DONE], event:error lines",
+        "Fuzz target FuzzParseSSE seeded with the four cases above; runs cleanly for at least 5 seconds in CI",
+        "Unit tests cover all four edge cases explicitly",
+        "go test -run TestSSE ./... passes",
+        "Tests pass"
+      ],
+      "priority": 16,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-017",
+      "title": "Port redaction layer to Go with parity test",
+      "description": "As a developer, I want the bash perl-regex redaction set ported to Go so the typed binary has the same redaction behavior.",
+      "acceptanceCriteria": [
+        "internal/redact package implements all bash patterns: dt0c01, dt0s16, gh_token, aws_akid, jwt, brave, gw_token (literal-bounded)",
+        "Each match is replaced with `<REDACTED:<kind>:<first11chars>…>` matching bash output byte-for-byte",
+        "Hits are returned alongside the redacted text (kind + count) so callers can route them to envelope.redactions[] and stderr",
+        "test/parity-redact.sh feeds 20 fixture strings through both bash _redact and Go redact and diffs output",
+        "Audit-file write parity is preserved (same path, same line format)",
+        "Tests pass"
+      ],
+      "priority": 17,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-018",
+      "title": "Implement Go `clawctl msg` emitting envelope by default",
+      "description": "As a local LLM caller, I want the Go binary's `clawctl msg` to emit a v1 ToolResponse envelope by default, with --text falling back to plain text.",
+      "acceptanceCriteria": [
+        "`clawctl msg AGENT TEXT` emits a valid ToolResponse on stdout (validated via internal/envelope.Validate)",
+        "`clawctl msg --text AGENT TEXT` emits the plain content string (parity with bash default)",
+        "-s/--session flag accepted with the same semantics as bash",
+        "Redaction is applied before envelope emission; redactions[] is populated when hits occur",
+        "Unit + integration test against a mock gateway covering happy, error, and redacted paths",
+        "Tests pass"
+      ],
+      "priority": 18,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-019",
+      "title": "Implement Go `clawctl stream` emitting NDJSON envelope",
+      "description": "As a local LLM caller, I want the Go binary's `clawctl stream` to emit NDJSON ToolStreamChunks ending in a ToolResponse, with --text falling back to plain text.",
+      "acceptanceCriteria": [
+        "`clawctl stream AGENT TEXT` emits one ToolStreamChunk per line on stdout",
+        "Final line is a ToolResponse with finish_reason set",
+        "Each emitted document validates against envelope.v1.json",
+        "`clawctl stream --text AGENT TEXT` emits buffered plain text (parity with bash)",
+        "-s/--session flag works as in bash",
+        "Test against recorded SSE fixture asserts byte-exact NDJSON output",
+        "Tests pass"
+      ],
+      "priority": 19,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-020",
+      "title": "Implement Go `clawctl cli` with ControlMaster-aware ssh",
+      "description": "As an operator, I want the Go binary's `clawctl cli` to use a connection-reusing ssh path and pass argv as a slice — never as a shell string.",
+      "acceptanceCriteria": [
+        "`clawctl cli ARGS...` shells out to `ssh -o ControlMaster=auto -o ControlPath=~/.ssh/cm-%r@%h:%p -o ControlPersist=10m $CLAWCTL_SSH_HOST -- /usr/local/bin/oc-remote ARGS...` with argv as exec.Command varargs",
+        "argv with spaces, quotes, $, and backticks is preserved end-to-end (verified via integration test against a local mock ssh server such as gliderlabs/ssh)",
+        "No code path concatenates argv into a single shell string",
+        "Tests pass"
+      ],
+      "priority": 20,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-021",
+      "title": "Hard-fail Go `clawctl cli` when oc-remote missing",
+      "description": "As an operator, I want the Go `clawctl cli` to exit 2 with a remediation message when oc-remote is not present on the host.",
+      "acceptanceCriteria": [
+        "Before invoking oc-remote, `clawctl cli` runs `ssh ... 'test -x /usr/local/bin/oc-remote'` and exits 2 with a remediation message if it fails",
+        "Remediation message points at the documented install path for oc-remote on the host",
+        "Integration test against a mock ssh server that does NOT have oc-remote asserts exit code 2 and message content",
+        "Integration test against a mock ssh server that DOES have oc-remote asserts the call proceeds",
+        "Tests pass"
+      ],
+      "priority": 21,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-022",
+      "title": "Implement Go `clawctl verify` parity",
+      "description": "As a developer, I want the Go binary's `clawctl verify {commit,pr,issue,file}` subcommands to behave identically to bash.",
+      "acceptanceCriteria": [
+        "`clawctl verify commit <hash>` shells out to `git cat-file -t` and exits 0/1 with parity messages",
+        "`clawctl verify pr <repo>#<num>` shells out to `gh pr view` with parity output",
+        "`clawctl verify issue <repo>#<num>` shells out to `gh issue view` with parity output",
+        "`clawctl verify file <path> [<ref>]` checks working tree or `git cat-file -e <ref>:<path>`",
+        "Exit codes match bash: 0 verified, 1 not found, 2 usage/ambiguous",
+        "test/parity-verify.sh runs both binaries and diffs stdout/stderr/exit on a fixture repo",
+        "Tests pass"
+      ],
+      "priority": 22,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-023",
+      "title": "Implement Go `clawctl trace` parity",
+      "description": "As an operator, I want the Go binary's `clawctl trace` to query Jaeger and print a span summary identical to the bash version.",
+      "acceptanceCriteria": [
+        "`clawctl trace <trace-id>` reads CLAWCTL_JAEGER_UI env var; exits 2 with same message if unset",
+        "Prints `trace-id`, `UI`, then a span summary (count + first 30 spans with service/operation/duration)",
+        "Output formatting matches bash byte-for-byte",
+        "test/parity-trace.sh runs both against a recorded Jaeger response fixture and diffs",
+        "Tests pass"
+      ],
+      "priority": 23,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-024",
+      "title": "Implement structured JSON logs in Go binary",
+      "description": "As an operator debugging a failed call, I want every Go-binary subcommand to emit a structured JSON log line on stderr when CLAWCTL_LOG=json.",
+      "acceptanceCriteria": [
+        "internal/logging package emits one JSON line per call: ts, traceparent, agent?, transport (api|ssh|local), subcommand, latency_ms, exit_code, redactions_count",
+        "Default mode (no env var) emits the human-friendly stderr lines the bash version emits",
+        "CLAWCTL_LOG=json switches to JSON output exclusively",
+        "Redaction is applied to log values using the same patterns as response redaction",
+        "Unit test asserts JSON shape and field set for a successful call and a failed call",
+        "Tests pass"
+      ],
+      "priority": 24,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-025",
+      "title": "Scaffold MCP stdio server (`clawctl mcp`) with tools/list",
+      "description": "As a Claude Code user, I want `clawctl mcp` to start an MCP stdio server that exposes one tool per agent returned by /v1/models.",
+      "acceptanceCriteria": [
+        "`clawctl mcp` starts an MCP stdio server using github.com/modelcontextprotocol/go-sdk",
+        "On startup, server fetches /v1/models and registers one tool per agent",
+        "Each tool's input schema mirrors the v1 envelope's input shape (text + optional session_id + optional tool_choice)",
+        "tools/list returns the registered tools with descriptions sourced from the agent metadata",
+        "End-to-end test: spawn `clawctl mcp` as a subprocess, send tools/list via MCP client, assert at least one tool is returned (against mock /v1/models)",
+        "Tests pass"
+      ],
+      "priority": 25,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-026",
+      "title": "Implement MCP tools/call (non-streaming)",
+      "description": "As a Claude Code user, I want tools/call to execute the agent via the gateway and return a final ToolResponse.",
+      "acceptanceCriteria": [
+        "tools/call routes to the existing internal/transport/api chat path",
+        "Returns the final ToolResponse as the MCP tool result content (JSON)",
+        "Trace propagation: MCP request id → traceparent on the gateway call → traceparent echoed in the tool result _meta",
+        "Errors return a typed ToolError (mapped to MCP error response) with code populated",
+        "End-to-end test: tools/call against mock gateway, assert ToolResponse shape and traceparent presence",
+        "Tests pass"
+      ],
+      "priority": 26,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-027",
+      "title": "Implement MCP streaming via progress notifications",
+      "description": "As a Claude Code user, I want streaming tool calls to surface incremental ToolStreamChunks as MCP progress notifications and finish with a ToolResponse.",
+      "acceptanceCriteria": [
+        "tools/call accepts a streaming flag in the input; when set, the call uses the SSE backend",
+        "Each ToolStreamChunk is sent as an MCP `notifications/progress` message with the chunk payload",
+        "Final ToolResponse is returned as the tool result",
+        "Chunk ordering preserved end-to-end (no reordering, no loss)",
+        "End-to-end test against recorded SSE fixture asserts: N progress notifications followed by 1 result, byte-identical chunk content",
+        "Tests pass"
+      ],
+      "priority": 27,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-028",
+      "title": "Document `claude mcp add` registration in docs/mcp.md",
+      "description": "As a new user, I want a one-step doc telling me how to register clawctl as an MCP server in Claude Code.",
+      "acceptanceCriteria": [
+        "docs/mcp.md exists",
+        "Contains the exact `claude mcp add clawctl --command clawctl --args mcp` invocation (or equivalent)",
+        "Documents required env vars (CLAWCTL_HOST, keychain bearer token, optional CLAWCTL_LOG)",
+        "Includes a worked example showing tools/list output and a tools/call snippet",
+        "Linked from README.md",
+        "Markdown lints clean"
+      ],
+      "priority": 28,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-029",
+      "title": "Add multi-arch release workflow",
+      "description": "As a maintainer, I want GitHub Actions to build darwin-arm64, darwin-amd64, linux-amd64, linux-arm64 binaries and attach them to a GitHub release on tag push.",
+      "acceptanceCriteria": [
+        ".github/workflows/release.yml triggers on tag push matching v*",
+        "Builds 4 binaries with `go build -ldflags '-s -w -X main.version=$TAG -X main.commit=$SHA'` and CGO_ENABLED=0",
+        "`clawctl version` in the binary prints the embedded semver and commit hash",
+        "Binaries are attached to the GitHub release as `clawctl-<os>-<arch>` artifacts",
+        "Workflow lints with actionlint",
+        "Tests pass"
+      ],
+      "priority": 29,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-030",
+      "title": "Add install/install.sh resolver",
+      "description": "As a new user, I want a single curl-pipeable install script that detects my OS+arch, downloads the right release binary, and installs it to /usr/local/bin/clawctl.",
+      "acceptanceCriteria": [
+        "install/install.sh detects uname -s and uname -m and maps to one of the four release artifact names",
+        "Downloads via curl with checksum verification (uses the SHA256SUMS file from the release)",
+        "Installs to /usr/local/bin/clawctl and chmods +x",
+        "Refuses to overwrite if /usr/local/bin/clawctl is not a clawctl binary (heuristic: `clawctl version` exits 0 and contains 'clawctl')",
+        "Shellcheck passes",
+        "README.md quickstart includes the curl one-liner",
+        "Tests pass"
+      ],
+      "priority": 30,
+      "passes": false,
+      "notes": ""
+    },
+    {
+      "id": "US-031",
+      "title": "Rename old bash clawctl to clawctl.bash and deprecate",
+      "description": "As an existing user of the bash MVP, I want the old script kept as clawctl.bash for one release cycle with a deprecation notice so I have a transition window.",
+      "acceptanceCriteria": [
+        "Existing bash entrypoint is moved from `clawctl` to `clawctl.bash` (Git-tracked rename, history preserved)",
+        "`clawctl.bash --help` prints a deprecation banner pointing at the typed binary",
+        "test/ that previously invoked `clawctl` is updated to invoke `clawctl.bash` (or the new typed binary, where applicable)",
+        "README.md documents the transition and removal target (one release cycle)",
+        ".github/workflows existing CI still passes",
+        "Shellcheck passes",
+        "Tests pass"
+      ],
+      "priority": 31,
+      "passes": false,
+      "notes": ""
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+# Ralph Progress Log
+Started: Sa.  9 Mai 2026 21:33:09 CEST
+---
+
+## US-001: Write transport decision matrix doc
+Iteration: 2026-05-09T19:35:00Z
+Status: done
+Files changed: docs/transport-decisions.md, prd.json
+Notes: 8 rows (one per existing subcommand). Markdown lints clean against repo de-facto convention (default rules minus MD013, since existing docs don't enforce line length).
+---
