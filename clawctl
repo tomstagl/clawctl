@@ -253,11 +253,6 @@ case "$cmd" in
       esac
     done
 
-    if [ "$envelope" = "true" ] && [ "$is_stream" = "true" ]; then
-      echo "clawctl stream: --envelope not yet supported (see US-007)" >&2
-      exit 2
-    fi
-
     if [ "${1:-}" = "" ]; then
       echo "usage: clawctl $cmd [-s <session-key>] [--envelope] <agent> [<text>]   (text from stdin if omitted)" >&2
       echo "       agent = 'default' or a specific agent slug" >&2
@@ -268,7 +263,7 @@ case "$cmd" in
 
     if [ "$#" -gt 0 ]; then text="$*"; else text="$(cat)"; fi
 
-    if [ "$envelope" = "true" ]; then
+    if [ "$envelope" = "true" ] && [ "$is_stream" = "false" ]; then
       tp="$(_traceparent)"
       body="$(mktemp)"
       red_out="$(mktemp)"
@@ -314,6 +309,141 @@ case "$cmd" in
            finish_reason: $finish
          }
          + (if $session != "" then {session_id: $session} else {} end)'
+      exit 0
+    fi
+
+    if [ "$envelope" = "true" ] && [ "$is_stream" = "true" ]; then
+      tp="$(_traceparent)"
+      raw="$(mktemp)"
+      contents="$(mktemp)"
+      per_chunk="$(mktemp)"
+      meta="$(mktemp)"
+      trap 'rm -f "$raw" "$contents" "$per_chunk" "$meta"' EXIT
+
+      _chat "$agent" true "$session" "$text" "$tp" > "$raw" || exit $?
+
+      # Parse SSE buffer: emit one JSON-encoded {"c": "..."} per non-empty
+      # delta to $contents, plus a single {"finish":..., "usage":...} to $meta.
+      python3 - "$raw" "$contents" "$meta" <<'PY'
+import json, sys
+raw_path, contents_path, meta_path = sys.argv[1], sys.argv[2], sys.argv[3]
+finish = "stop"
+usage = {}
+err = None
+with open(contents_path, "w") as out, open(raw_path) as fh:
+    for line in fh:
+        line = line.rstrip("\n")
+        if line.startswith("event:") and "error" in line:
+            err = line
+            continue
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].lstrip()
+        if payload == "[DONE]":
+            break
+        try:
+            obj = json.loads(payload)
+        except Exception:
+            continue
+        if isinstance(obj.get("usage"), dict):
+            usage = obj["usage"]
+        choices = obj.get("choices") or []
+        if not choices:
+            if "error" in obj:
+                err = json.dumps(obj["error"])
+            continue
+        c0 = choices[0]
+        if c0.get("finish_reason"):
+            finish = c0["finish_reason"]
+        delta = c0.get("delta") or c0.get("message") or {}
+        content = delta.get("content") or ""
+        if content:
+            out.write(json.dumps({"c": content}) + "\n")
+with open(meta_path, "w") as fh:
+    json.dump({"finish": finish, "usage": usage, "err": err}, fh)
+PY
+
+      # Per-chunk redaction pass (boundary-detection + content for emission).
+      # stderr suppressed so the aggregate pass below remains the canonical
+      # WARNING source; audit-file dups are accepted.
+      : > "$per_chunk"
+      agg=""
+      while IFS= read -r line; do
+        c=$(printf '%s' "$line" | jq -r '.c')
+        rc=$(printf '%s' "$c" | _redact "$agent" 2>/dev/null)
+        printf '%s' "$rc" | jq -cRs '{c: .}' >> "$per_chunk"
+        agg+="$c"
+      done < "$contents"
+
+      # Aggregate redaction (canonical pass: stderr WARNING + audit log fire here).
+      agg_redacted=$(printf '%s' "$agg" | _redact "$agent")
+
+      per_chunk_concat=$(jq -rs 'map(.c) | add // ""' "$per_chunk")
+
+      finish_raw=$(jq -r '.finish // "stop"' "$meta")
+      case "$finish_raw" in
+        stop|length|content_filter|error) finish="$finish_raw" ;;
+        tool_calls|function_call|tool_call) finish="tool_call" ;;
+        *) finish="stop" ;;
+      esac
+      in_tok=$(jq -r '.usage.prompt_tokens // empty' "$meta")
+      out_tok=$(jq -r '.usage.completion_tokens // empty' "$meta")
+      tot_tok=$(jq -r '.usage.total_tokens // empty' "$meta")
+
+      if [ "$per_chunk_concat" = "$agg_redacted" ]; then
+        # Boundary-safe: per-chunk redaction sums to the aggregate-redacted
+        # text, so no secret crossed an SSE chunk boundary. Emit per-chunk.
+        idx=0
+        while IFS= read -r line; do
+          content=$(printf '%s' "$line" | jq -r '.c')
+          jq -nc \
+            --arg agent "openclaw/$agent" \
+            --arg tp "$tp" \
+            --arg session "$session" \
+            --arg content "$content" \
+            --argjson index "$idx" \
+            '{envelope_version:"1", kind:"tool_stream_chunk",
+              agent:$agent, traceparent:$tp, index:$index,
+              delta:{content:$content}, redactions:[], finish_reason:null}
+             + (if $session != "" then {session_id:$session} else {} end)'
+          idx=$((idx + 1))
+        done < "$per_chunk"
+      else
+        # A secret pattern spans chunk boundaries — coalesce into a single
+        # ToolStreamChunk carrying the boundary-safe redacted aggregate.
+        echo "warning: redacted secret pattern crossed SSE chunk boundary; coalesced into one chunk" >&2
+        jq -nc \
+          --arg agent "openclaw/$agent" \
+          --arg tp "$tp" \
+          --arg session "$session" \
+          --arg content "$agg_redacted" \
+          '{envelope_version:"1", kind:"tool_stream_chunk",
+            agent:$agent, traceparent:$tp, index:0,
+            delta:{content:$content}, redactions:[], finish_reason:null}
+           + (if $session != "" then {session_id:$session} else {} end)'
+      fi
+
+      # Terminal ToolResponse with the aggregate-redacted output.
+      jq -nc \
+        --arg agent "openclaw/$agent" \
+        --arg tp "$tp" \
+        --arg session "$session" \
+        --arg input "$text" \
+        --arg output "$agg_redacted" \
+        --arg finish "$finish" \
+        --arg in_tok "$in_tok" \
+        --arg out_tok "$out_tok" \
+        --arg tot_tok "$tot_tok" \
+        '{envelope_version:"1", kind:"tool_response",
+          agent:$agent, traceparent:$tp,
+          input:{role:"user", content:$input},
+          output:$output, redactions:[],
+          usage: ({}
+            | (if $in_tok  != "" then .input_tokens  = ($in_tok|tonumber)  else . end)
+            | (if $out_tok != "" then .output_tokens = ($out_tok|tonumber) else . end)
+            | (if $tot_tok != "" then .total_tokens  = ($tot_tok|tonumber) else . end)),
+          finish_reason: $finish}
+         + (if $session != "" then {session_id:$session} else {} end)'
       exit 0
     fi
 
@@ -532,7 +662,9 @@ clawctl — openclaw client (host: ${CLAWCTL_HOST:-<unset>})
   clawctl msg [-s SESSION] [--envelope] AGENT [TEXT]
                                               chat with agent; stdin if no text
                                               --envelope emits a v1 ToolResponse JSON document
-  clawctl stream [-s SESSION] AGENT [TEXT]    same, SSE; output buffered + redacted
+  clawctl stream [-s SESSION] [--envelope] AGENT [TEXT]
+                                              same, SSE; output buffered + redacted
+                                              --envelope emits NDJSON ToolStreamChunks + final ToolResponse
   clawctl raw METHOD PATH [curl-args]         arbitrary call with auth + traceparent
   clawctl cli SUBCOMMAND...                   run \`openclaw …\` over SSH on host
   clawctl verify KIND ARGS                    R-2 claim verification (see 'clawctl verify help')

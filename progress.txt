@@ -48,3 +48,20 @@ Files changed: clawctl, test/envelope-msg.sh, prd.json
 Notes: _chat now takes an optional 5th traceparent arg so the msg envelope path can bind the stderr trace-id into the JSON. redactions[] is emitted as [] for now — populating it from _redact hits is US-008. --envelope on stream is rejected with exit 2 pointing at US-007.
 ---
 
+## US-007: Add --envelope flag to bash `clawctl stream`
+Iteration: 2026-05-09T20:18:30Z
+Status: done
+Files changed: clawctl, test/envelope-stream.sh, prd.json
+Notes: SSE buffer is parsed in Python into per-delta {"c":...} JSONL, then
+each delta is redacted in isolation; the aggregate is also redacted in one
+shot. If the per-chunk concat equals the aggregate-redacted text we emit
+faithful per-chunk ToolStreamChunks (boundary-safe), otherwise we coalesce
+into a single ToolStreamChunk carrying the safe aggregate (and warn on
+stderr). Either way, the terminal frame is a ToolResponse with the
+aggregate-redacted output, gateway-reported usage, and the W3C
+finish_reason. redactions[] stays [] for now (US-008 surfaces the kind set).
+Plain `clawctl stream` is unchanged. Discovered mid-impl that `jq -Rs`
+pretty-prints by default, breaking the line-by-line per_chunk read; fixed
+with `-cRs`. shellcheck (severity=warning) clean on clawctl + new test.
+---
+
