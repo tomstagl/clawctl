@@ -29,3 +29,15 @@ Status: done
 Files changed: install/ssh-config.snippet (new), install/ssh-setup.sh (new), README.md, prd.json
 Notes: Snippet uses Host * because CLAWCTL_SSH_HOST is per-user and unpredictable; ControlPersist=10m bounds stray sockets. Setup script is idempotent via BEGIN/END markers and tested across 3 reruns. Shellcheck clean at severity=warning.
 ---
+## US-005: Make oc-remote a hard requirement in `clawctl cli`
+Iteration: 2026-05-09T00:00:00Z
+Status: done
+Files changed: clawctl, README.md, test/cli-hardening.sh, prd.json
+Notes: Removed the printf %q-into-shell-string fallback. `clawctl cli` now
+exits 2 with an inline remediation (heredoc-installable oc-remote shim,
+README §"oc-remote (required for clawctl cli)") when the host probe fails.
+Added test/cli-hardening.sh with a fake-ssh shim that exercises 12 checks
+(present/absent/argv-with-spaces+quotes+metacharacters/missing env). bash
+-n + shellcheck (severity=warning) pass on clawctl, install.sh, and the
+new test.
+---

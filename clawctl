@@ -326,19 +326,30 @@ PY
     ;;
 
   cli)
-    # Run an openclaw CLI command on the host with proper PATH and preserved argv.
-    # If oc-remote is installed on the host, prefer it for clean argv handling.
+    # Run an openclaw CLI command on the host via oc-remote.
+    # oc-remote is REQUIRED: it accepts argv as a slice and invokes openclaw
+    # without shell-string interpolation, so callers cannot inject host-side
+    # shell metacharacters via argv. There is no fallback path.
     _require_ssh_host
-    if ssh -o BatchMode=yes -o ConnectTimeout=5 "$CLAWCTL_SSH_HOST" 'test -x /usr/local/bin/oc-remote' 2>/dev/null; then
-      ssh "$CLAWCTL_SSH_HOST" -- /usr/local/bin/oc-remote "$@"
-    else
-      # Fallback: shell-escape each arg ourselves.
-      esc=""
-      for a in "$@"; do
-        esc+=" $(printf %q "$a")"
-      done
-      ssh "$CLAWCTL_SSH_HOST" "export PATH=\$HOME/.npm-global/bin:\$PATH; openclaw$esc"
+    if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "$CLAWCTL_SSH_HOST" \
+        'test -x /usr/local/bin/oc-remote' 2>/dev/null; then
+      cat >&2 <<EOF
+clawctl cli: oc-remote not found at /usr/local/bin/oc-remote on $CLAWCTL_SSH_HOST.
+
+oc-remote is required so argv reaches openclaw without shell-string
+interpolation. Install it on the host (see the "oc-remote (required for
+clawctl cli)" section in README.md for the full procedure):
+
+  ssh $CLAWCTL_SSH_HOST 'sudo install -m 0755 /dev/stdin /usr/local/bin/oc-remote' <<'OCREMOTE'
+  #!/usr/bin/env bash
+  set -euo pipefail
+  export PATH="\$HOME/.npm-global/bin:\$PATH"
+  exec openclaw "\$@"
+  OCREMOTE
+EOF
+      exit 2
     fi
+    ssh "$CLAWCTL_SSH_HOST" -- /usr/local/bin/oc-remote "$@"
     ;;
 
   verify)

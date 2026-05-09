@@ -68,6 +68,30 @@ What it does:
 
 Inspect [`install/ssh-config.snippet`](install/ssh-config.snippet) before running if you already manage `ControlMaster` yourself — your existing settings win precedence by being earlier in the file, but you may prefer to merge by hand.
 
+### oc-remote (required for `clawctl cli`)
+
+`clawctl cli` will refuse to run unless `/usr/local/bin/oc-remote` is present on the host. `oc-remote` is a tiny host-side shim that receives argv as a slice and exec's `openclaw "$@"`, so callers cannot inject host-side shell metacharacters via argv. The wrapper does **not** ship a `printf %q`-into-shell-string fallback — there is no second path.
+
+Install on the gateway host (one-shot, idempotent):
+
+```bash
+ssh "$CLAWCTL_SSH_HOST" 'sudo install -m 0755 /dev/stdin /usr/local/bin/oc-remote' <<'OCREMOTE'
+#!/usr/bin/env bash
+set -euo pipefail
+export PATH="$HOME/.npm-global/bin:$PATH"
+exec openclaw "$@"
+OCREMOTE
+```
+
+Verify:
+
+```bash
+ssh "$CLAWCTL_SSH_HOST" 'test -x /usr/local/bin/oc-remote && echo ok'
+clawctl cli help
+```
+
+If you skip this step, `clawctl cli` exits 2 with a remediation message pointing back here. The HTTP-API subcommands (`health`, `models`, `msg`, `stream`, `raw`, `verify`, `trace`) do not require `oc-remote`.
+
 ## Setup
 
 One required environment variable. Export it in `~/.zshrc` (or equivalent):
