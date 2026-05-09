@@ -158,17 +158,25 @@ _models_cache() {
     age_sec=$(( $(date +%s) - $(stat -f %m "$cache" 2>/dev/null || echo 0) ))
   fi
   if [ "$age_sec" -gt "$CLAWCTL_MODELS_TTL" ]; then
-    if curl --silent --show-error --fail-with-body \
+    local curl_exit=0
+    set +e
+    curl --silent --show-error --fail-with-body \
         --max-time "$CLAWCTL_TIMEOUT" \
         --retry 2 --retry-connrefused --retry-delay 1 --retry-all-errors \
         -H "Authorization: Bearer $(_token)" \
         -H "Accept: application/json" \
         -o "$cache.tmp" \
-        "${CLAWCTL_HOST}/v1/models" >/dev/null 2>&1; then
+        "${CLAWCTL_HOST}/v1/models" >/dev/null 2>&1
+    curl_exit=$?
+    set -e
+    if [ "$curl_exit" -eq 0 ]; then
       mv "$cache.tmp" "$cache"
     else
       rm -f "$cache.tmp"
-      [ -f "$cache" ] || return 1
+      # Fall back to a stale cache if one exists; otherwise propagate the
+      # curl exit code so the documented contract (6/7/22/28) reaches the
+      # caller instead of a generic 1.
+      [ -f "$cache" ] || return "$curl_exit"
     fi
   fi
   cat "$cache"
@@ -765,13 +773,18 @@ Optional env:
   CLAWCTL_NO_REDACT=1       disable client-side response redaction (NOT recommended)
   CLAWCTL_MODELS_TTL        seconds to cache /v1/models (default 60)
 
-Exit codes for transport calls:
+Exit codes (transport):
   0   ok
+  2   usage error, missing env var, unknown subcommand
   6   DNS resolution failed
   7   connection refused
   22  HTTP 4xx/5xx (body printed; reason on stderr)
   28  timeout
-  2   usage error
+
+Subcommand-specific exit codes (rationale):
+  verify    1 = unverified (commit/PR/issue/file not found); see 'clawctl verify help'
+  cli       pass-through: ssh and oc-remote/openclaw exit codes reach the caller unchanged
+  trace     best-effort: returns 0 even when Jaeger is unreachable so the UI link still surfaces
 EOF
     ;;
 

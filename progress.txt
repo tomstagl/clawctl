@@ -82,3 +82,9 @@ and plain msg; 19 checks pass (schema validation, kind coverage,
 offset_hint type, no-leak, WARNING + audit). bash -n + shellcheck clean on
 clawctl and the new test.
 ---
+## US-009: Audit exit codes across all subcommands
+Iteration: 2026-05-09T00:00:00Z
+Status: done
+Files changed: clawctl, test/exit-codes.sh, prd.json
+Notes: Fixed _models_cache to propagate curl exit codes (was returning generic 1 on cache-miss + transport failure). Extended `clawctl help` table with subcommand-specific overrides (verify=1, cli pass-through, trace best-effort 0). New test/exit-codes.sh table-tests 37 cases: missing env vars, curl exits 6/7/22/28 across health/models/msg/raw, usage errors across all subcommands, unknown command, plus the documented overrides. Fakes `curl`+`security` on PATH so it runs offline.
+---
