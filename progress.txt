@@ -88,3 +88,9 @@ Status: done
 Files changed: clawctl, test/exit-codes.sh, prd.json
 Notes: Fixed _models_cache to propagate curl exit codes (was returning generic 1 on cache-miss + transport failure). Extended `clawctl help` table with subcommand-specific overrides (verify=1, cli pass-through, trace best-effort 0). New test/exit-codes.sh table-tests 37 cases: missing env vars, curl exits 6/7/22/28 across health/models/msg/raw, usage errors across all subcommands, unknown command, plus the documented overrides. Fakes `curl`+`security` on PATH so it runs offline.
 ---
+## US-010: Write Go-vs-Rust language-pick decision doc
+Iteration: 2026-05-09T00:00:00Z
+Status: done
+Files changed: docs/typed-binary-language.md, prd.json
+Notes: Decision is Go. Tie-breaker: MCP SDK maturity (modelcontextprotocol/go-sdk is the official, spec-current SDK; Rust side is community-only and trails). Cross-compile and team familiarity reinforce; static-binary-size advantage to Rust noted but not load-bearing for `curl | sh` install. Doc lists the six criteria called out in US-010 acceptance, records the tie-breaker explicitly, and ends with what the call commits us to (cmd/clawctl + go.mod + CGO_ENABLED=0 + os/exec for ssh) and what it does not (rewriting bash MVP in one go, using Go for ralph.sh / install scripts). Markdown lints to the same posture as docs/transport-decisions.md and docs/envelope.md (only MD013 line-length, by project convention).
+---
