@@ -34,6 +34,8 @@ func main() {
 	case "version", "--version":
 		fmt.Printf("clawctl %s (%s)\n", version, commit)
 		os.Exit(0)
+	case "health":
+		healthCmd(cfg)
 	default:
 		// Subcommands are not yet implemented in the typed binary; the bash
 		// entrypoint at ./clawctl is still authoritative. We deliberately exit

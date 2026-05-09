@@ -106,3 +106,27 @@ Status: done
 Files changed: go.mod, go.sum, schemas/embed.go, internal/envelope/envelope.go, internal/envelope/envelope_test.go, prd.json
 Notes: Added schemas package (`github.com/tomstagl/clawctl/schemas`) that embeds envelope.v1.json via go:embed — keeps the JSON file at repo root as the single source of truth (also read by bash) without duplicating it under internal/. internal/envelope defines ToolRequest/ToolResponse/ToolStreamChunk/ToolError structs with json tags mirroring schemas/envelope.v1.json field names; optional integer fields use *int so omit-vs-zero is honest (Redaction.OffsetHint/Count, ToolError.HTTPStatus/ExitCode). ToolStreamChunk.FinishReason is *string (no omitempty) so nil marshals as JSON null per the schema's `"type": "null"` rule. envelope.Validate(any) compiles the schema once via sync.Once, marshals/unmarshals the input into a plain interface{} tree, and runs santhosh-tekuri/jsonschema/v5 against it (draft 2020-12 supported). 11 tests cover happy/redacted/error/streaming fixtures plus four struct-roundtrip cases and three negative cases (unknown version, missing required field, bogus envelope kind). go vet ./... clean; CGO_ENABLED=0 go test ./... passes — default `go test ./...` hits a known Go 1.22 + Darwin 25 dyld LC_UUID bug only when the test binary external-links a third-party dep (jsonschema), so CGO_ENABLED=0 is the right invocation here too (matches what US-029 release will use). Trip-hazard: avoid running `go build ./cmd/clawctl` from the repo root (still overwrites the bash entrypoint until US-031 renames).
 ---
+
+## US-013: Implement Go `clawctl health`
+Iteration: 2026-05-09T20:48:00Z
+Status: done
+Files changed: internal/transport/api/{client,client_test}.go (new), cmd/clawctl/{main.go,health.go,health_test.go}, test/parity-health.sh (new), prd.json
+Notes: New internal/transport/api package mirrors curl's retry + exit-code
+contract via four typed errors (DNSError=6, ConnRefusedError=7,
+HTTPError=22, TimeoutError=28) plus an ExitCode(err) mapper. Get(ctx, path,
+authed) does up to 3 attempts with 1s delay, retries on transport errors
+and 5xx but NOT on 4xx (caller-fault) or already-exhausted timeouts. The
+TokenSource is a func() so /health stays anonymous and never touches the
+Keychain. cmd/clawctl/health.go pretty-prints with json.Encoder
+(2-space indent, escapeHTML=false, json.Number) so output matches `jq .`
+byte-for-byte for ASCII single/alphabetical-key bodies; HTTP errors still
+write the body to stdout (curl --fail-with-body parity). 11 unit tests
+cover happy/4xx-no-retry/5xx-retries-then-fails/5xx-recovers/refused/
+timeout/DNS/auth-bearer/missing-host/exit-code-mapping. Trip-hazard hit
+during parity test: macOS http.server hangs in HTTPServer.__init__ on
+socket.getfqdn() (reverse DNS). Worked around by overriding server_bind to
+skip getfqdn — common pattern for sandboxed CI. test/parity-health.sh runs
+12 checks across 4 cases (200/500/refused/no-host) against a controllable
+Python mock; all pass. go vet, go test ./..., bash -n, shellcheck (clawctl
++ install.sh + new test) all clean.
+---
