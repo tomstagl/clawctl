@@ -46,17 +46,31 @@ _trace_id_of() { printf '%s' "$1" | cut -d- -f2; }
 
 # Redact known secret patterns from stdin → stdout.
 # Writes hit-kind summary to stderr and appends an audit entry on every match.
-# Exits 0 always (redaction is not a transport failure).
+# When CLAWCTL_REDACT_SINK is set, also writes a JSON array of
+# {kind, offset_hint, count} entries (one per match, byte offset into the
+# pre-redaction input) to that path so envelope emitters can populate
+# redactions[] without re-parsing stderr. Exits 0 always (redaction is not a
+# transport failure).
 _redact() {
-  if [ "$CLAWCTL_NO_REDACT" = "1" ]; then cat; return 0; fi
+  if [ "$CLAWCTL_NO_REDACT" = "1" ]; then
+    # Honor sink even on bypass, so envelope emitters always see a valid JSON
+    # array rather than a missing file.
+    if [ -n "${CLAWCTL_REDACT_SINK:-}" ]; then
+      printf '[]' > "$CLAWCTL_REDACT_SINK"
+    fi
+    cat
+    return 0
+  fi
 
   local agent="${1:-?}"
   local gw_token=""
   gw_token="$(_token 2>/dev/null || true)"
 
   AGENT="$agent" GW_TOKEN="$gw_token" AUDIT="$CLAWCTL_CACHE_DIR/last-redaction" \
+  SINK="${CLAWCTL_REDACT_SINK:-}" \
   perl -e '
     my $text = do { local $/; <STDIN> };
+    my $orig = $text;
     my %pat = (
       dt0c01    => qr/dt0c01\.[A-Za-z0-9_.\-]{20,}/,
       dt0s16    => qr/dt0s16\.[A-Za-z0-9_.\-]{20,}/,
@@ -66,17 +80,48 @@ _redact() {
       brave     => qr/BSA[A-Za-z0-9_\-]{25,}/,
     );
     my %hits;
+    my @events; # one entry per match: {kind, offset_hint}
     for my $kind (sort keys %pat) {
       my $re = $pat{$kind};
+      # Scan the unmodified input for offsets; offsets stay stable because we
+      # never mutate $orig.
+      while ($orig =~ /$re/g) {
+        push @events, { kind => $kind, offset_hint => $-[0] + 0 };
+      }
+      # Then substitute against $text. Substitution shifts later offsets in
+      # $text, so we deliberately do NOT use $text positions for offset_hint.
       $hits{$kind}++ while $text =~ s/$re/"<REDACTED:$kind:".substr($&,0,11)."\xE2\x80\xA6>"/e;
     }
     # gateway-token literal (length-bounded)
     my $gw = $ENV{GW_TOKEN} // "";
     if (length($gw) >= 16) {
       my $q = quotemeta($gw);
+      while ($orig =~ /$q/g) {
+        push @events, { kind => "gw_token", offset_hint => $-[0] + 0 };
+      }
       $hits{gw_token}++ while $text =~ s/$q/"<REDACTED:gw_token:".substr($gw,0,6)."\xE2\x80\xA6>"/e;
     }
     print STDOUT $text;
+
+    my $sink = $ENV{SINK} // "";
+    if ($sink ne "") {
+      my @sorted = sort {
+        $a->{offset_hint} <=> $b->{offset_hint} || $a->{kind} cmp $b->{kind}
+      } @events;
+      my @parts;
+      for my $e (@sorted) {
+        push @parts, sprintf(
+          q({"kind":"%s","offset_hint":%d,"count":1}),
+          $e->{kind}, $e->{offset_hint},
+        );
+      }
+      my $json = "[" . join(",", @parts) . "]";
+      if (open(my $fh, ">", $sink)) {
+        print $fh $json;
+        close($fh);
+      }
+    }
+
     if (%hits) {
       my $ts = `date -u +%FT%TZ`; chomp $ts;
       my $kinds = join(",", sort keys %hits);
@@ -267,11 +312,17 @@ case "$cmd" in
       tp="$(_traceparent)"
       body="$(mktemp)"
       red_out="$(mktemp)"
-      trap 'rm -f "$body" "$red_out"' EXIT
+      red_sink="$(mktemp)"
+      trap 'rm -f "$body" "$red_out" "$red_sink"' EXIT
       _chat "$agent" false "$session" "$text" "$tp" > "$body"
 
       jq -r '.choices[0].message.content // ""' "$body" \
-        | _redact "$agent" > "$red_out"
+        | CLAWCTL_REDACT_SINK="$red_sink" _redact "$agent" > "$red_out"
+
+      redactions_json="[]"
+      if [ -s "$red_sink" ]; then
+        redactions_json="$(cat "$red_sink")"
+      fi
 
       finish_raw=$(jq -r '.choices[0].finish_reason // "stop"' "$body")
       case "$finish_raw" in
@@ -290,6 +341,7 @@ case "$cmd" in
         --arg session "$session" \
         --arg input "$text" \
         --rawfile output "$red_out" \
+        --argjson redactions "$redactions_json" \
         --arg finish "$finish" \
         --arg in_tok "$in_tok" \
         --arg out_tok "$out_tok" \
@@ -301,7 +353,7 @@ case "$cmd" in
            traceparent: $tp,
            input: { role: "user", content: $input },
            output: $output,
-           redactions: [],
+           redactions: $redactions,
            usage: ({}
              | (if $in_tok  != "" then .input_tokens  = ($in_tok|tonumber)  else . end)
              | (if $out_tok != "" then .output_tokens = ($out_tok|tonumber) else . end)
@@ -317,8 +369,11 @@ case "$cmd" in
       raw="$(mktemp)"
       contents="$(mktemp)"
       per_chunk="$(mktemp)"
+      per_chunk_red="$(mktemp)"
       meta="$(mktemp)"
-      trap 'rm -f "$raw" "$contents" "$per_chunk" "$meta"' EXIT
+      agg_sink="$(mktemp)"
+      chunk_sink="$(mktemp)"
+      trap 'rm -f "$raw" "$contents" "$per_chunk" "$per_chunk_red" "$meta" "$agg_sink" "$chunk_sink"' EXIT
 
       _chat "$agent" true "$session" "$text" "$tp" > "$raw" || exit $?
 
@@ -365,18 +420,34 @@ PY
 
       # Per-chunk redaction pass (boundary-detection + content for emission).
       # stderr suppressed so the aggregate pass below remains the canonical
-      # WARNING source; audit-file dups are accepted.
+      # WARNING source; audit-file dups are accepted. Per-chunk redactions[]
+      # is captured into $per_chunk_red, one JSON-array line per chunk, in the
+      # same order as $per_chunk so we can join them by line number.
       : > "$per_chunk"
+      : > "$per_chunk_red"
       agg=""
       while IFS= read -r line; do
         c=$(printf '%s' "$line" | jq -r '.c')
-        rc=$(printf '%s' "$c" | _redact "$agent" 2>/dev/null)
+        : > "$chunk_sink"
+        rc=$(printf '%s' "$c" \
+          | CLAWCTL_REDACT_SINK="$chunk_sink" _redact "$agent" 2>/dev/null)
         printf '%s' "$rc" | jq -cRs '{c: .}' >> "$per_chunk"
+        if [ -s "$chunk_sink" ]; then
+          cat "$chunk_sink" >> "$per_chunk_red"
+        else
+          printf '[]' >> "$per_chunk_red"
+        fi
+        printf '\n' >> "$per_chunk_red"
         agg+="$c"
       done < "$contents"
 
       # Aggregate redaction (canonical pass: stderr WARNING + audit log fire here).
-      agg_redacted=$(printf '%s' "$agg" | _redact "$agent")
+      agg_redacted=$(printf '%s' "$agg" \
+        | CLAWCTL_REDACT_SINK="$agg_sink" _redact "$agent")
+      agg_redactions_json="[]"
+      if [ -s "$agg_sink" ]; then
+        agg_redactions_json="$(cat "$agg_sink")"
+      fi
 
       per_chunk_concat=$(jq -rs 'map(.c) | add // ""' "$per_chunk")
 
@@ -394,32 +465,44 @@ PY
         # Boundary-safe: per-chunk redaction sums to the aggregate-redacted
         # text, so no secret crossed an SSE chunk boundary. Emit per-chunk.
         idx=0
+        # Read the per-chunk redactions sidecar in lockstep with $per_chunk.
+        # Bash 3.x has no good way to read two files in parallel without
+        # subshells, so we collect the redactions array first.
+        red_lines=()
+        while IFS= read -r r_line; do
+          red_lines+=("$r_line")
+        done < "$per_chunk_red"
+
         while IFS= read -r line; do
           content=$(printf '%s' "$line" | jq -r '.c')
+          chunk_red="${red_lines[$idx]:-[]}"
           jq -nc \
             --arg agent "openclaw/$agent" \
             --arg tp "$tp" \
             --arg session "$session" \
             --arg content "$content" \
             --argjson index "$idx" \
+            --argjson redactions "$chunk_red" \
             '{envelope_version:"1", kind:"tool_stream_chunk",
               agent:$agent, traceparent:$tp, index:$index,
-              delta:{content:$content}, redactions:[], finish_reason:null}
+              delta:{content:$content}, redactions:$redactions, finish_reason:null}
              + (if $session != "" then {session_id:$session} else {} end)'
           idx=$((idx + 1))
         done < "$per_chunk"
       else
         # A secret pattern spans chunk boundaries — coalesce into a single
-        # ToolStreamChunk carrying the boundary-safe redacted aggregate.
+        # ToolStreamChunk carrying the boundary-safe redacted aggregate. The
+        # aggregate redactions[] is the truthful set when boundary-coalescing.
         echo "warning: redacted secret pattern crossed SSE chunk boundary; coalesced into one chunk" >&2
         jq -nc \
           --arg agent "openclaw/$agent" \
           --arg tp "$tp" \
           --arg session "$session" \
           --arg content "$agg_redacted" \
+          --argjson redactions "$agg_redactions_json" \
           '{envelope_version:"1", kind:"tool_stream_chunk",
             agent:$agent, traceparent:$tp, index:0,
-            delta:{content:$content}, redactions:[], finish_reason:null}
+            delta:{content:$content}, redactions:$redactions, finish_reason:null}
            + (if $session != "" then {session_id:$session} else {} end)'
       fi
 
@@ -430,6 +513,7 @@ PY
         --arg session "$session" \
         --arg input "$text" \
         --arg output "$agg_redacted" \
+        --argjson redactions "$agg_redactions_json" \
         --arg finish "$finish" \
         --arg in_tok "$in_tok" \
         --arg out_tok "$out_tok" \
@@ -437,7 +521,7 @@ PY
         '{envelope_version:"1", kind:"tool_response",
           agent:$agent, traceparent:$tp,
           input:{role:"user", content:$input},
-          output:$output, redactions:[],
+          output:$output, redactions:$redactions,
           usage: ({}
             | (if $in_tok  != "" then .input_tokens  = ($in_tok|tonumber)  else . end)
             | (if $out_tok != "" then .output_tokens = ($out_tok|tonumber) else . end)

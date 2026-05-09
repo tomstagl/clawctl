@@ -65,3 +65,20 @@ pretty-prints by default, breaking the line-by-line per_chunk read; fixed
 with `-cRs`. shellcheck (severity=warning) clean on clawctl + new test.
 ---
 
+## US-008: Move redaction-hit reporting into envelope.redactions[]
+Iteration: 2026-05-09T20:26:36Z
+Status: done
+Files changed: clawctl, test/envelope-redacted.sh, prd.json
+Notes: _redact now writes a JSON array of {kind,offset_hint,count} events to
+$CLAWCTL_REDACT_SINK when set. Offsets are byte positions in the
+pre-substitution input (scanned via /g pos before s///e mutates the text)
+so they stay stable. The msg --envelope path captures one sink and feeds it
+to jq via --argjson. Stream --envelope captures per-chunk sinks (paired with
+$per_chunk lines by index) plus an aggregate sink for the terminal
+ToolResponse and the boundary-coalesce path. Existing stderr WARNING + audit
+append are unchanged (the sink is an additive side channel). New
+test/envelope-redacted.sh feeds dt0c01 + ghp_ secrets through msg, stream,
+and plain msg; 19 checks pass (schema validation, kind coverage,
+offset_hint type, no-leak, WARNING + audit). bash -n + shellcheck clean on
+clawctl and the new test.
+---
