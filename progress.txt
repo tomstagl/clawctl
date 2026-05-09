@@ -8,3 +8,17 @@ Status: done
 Files changed: docs/transport-decisions.md, prd.json
 Notes: 8 rows (one per existing subcommand). Markdown lints clean against repo de-facto convention (default rules minus MD013, since existing docs don't enforce line length).
 ---
+
+## US-002: Define v1 JSON-schema tool envelope
+Iteration: 2026-05-09T19:42:00Z
+Status: done
+Files changed: schemas/envelope.v1.json, docs/envelope.md, prd.json
+Notes: Single-file schema with oneOf over four $defs (ToolRequest/Response/StreamChunk/Error). ErrorCode enum mirrors curl exit codes + gateway HTTP statuses + redaction kinds. Verified via ajv-cli (draft 2020-12): compiles clean, rejects {}, accepts minimal happy ToolResponse. markdownlint-cli2 clean (MD013/MD041 disabled per repo convention).
+---
+
+## US-003: Add envelope test fixtures
+Iteration: 2026-05-09T19:48:00Z
+Status: done
+Files changed: test/fixtures/envelope/{happy,error,redacted}.json, test/fixtures/envelope/streaming.ndjson, test/validate-fixtures.sh, prd.json
+Notes: Validator wraps `npx ajv-cli@5 --spec=draft2020`, splits NDJSON line-by-line, then layers structural guards (>=3 chunks, terminal tool_response, non-empty redactions[]). Local run: 10/10 checks pass, exit 0. Negative spot-check (envelope_version=2) still fails as expected. Streaming fixture uses one shared traceparent across chunks + terminal — matches design principle 3 (one trace per tool call). CI is unaffected (validator lives under test/, which shellcheck ignores).
+---

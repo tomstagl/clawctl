@@ -1,0 +1,14 @@
+{
+  "envelope_version": "1",
+  "kind": "tool_error",
+  "agent": "openclaw/concierge",
+  "traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-bbbbbbbbbbbbbbbb-01",
+  "code": "gateway.unauthorized",
+  "message": "Gateway rejected the bearer token (HTTP 401). Refresh the Keychain entry and retry.",
+  "http_status": 401,
+  "exit_code": 22,
+  "details": {
+    "endpoint": "/v1/chat/completions",
+    "method": "POST"
+  }
+}
