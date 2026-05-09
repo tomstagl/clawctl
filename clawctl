@@ -154,11 +154,15 @@ _validate_agent() {
 }
 
 # Call /v1/chat/completions; returns body on stdout, prints trace-id + errors on stderr.
-# args: <agent> <stream:bool> <session_key_or_empty> <text>
+# args: <agent> <stream:bool> <session_key_or_empty> <text> [<traceparent>]
+# If traceparent is omitted, one is generated. Callers that need to bind the
+# generated trace-id into a structured envelope MUST pass their own.
 _chat() {
-  local agent="$1" stream="$2" session="$3" text="$4"
-  local tp body http_code curl_exit
-  tp="$(_traceparent)"
+  local agent="$1" stream="$2" session="$3" text="$4" tp="${5:-}"
+  local body http_code curl_exit
+  if [ -z "$tp" ]; then
+    tp="$(_traceparent)"
+  fi
   echo "trace-id: $(_trace_id_of "$tp")" >&2
 
   body="$(mktemp)"
@@ -235,11 +239,13 @@ case "$cmd" in
     [ "$cmd" = "stream" ] && is_stream=true
 
     session=""
+    envelope=false
     while [ "${1:-}" != "" ]; do
       case "$1" in
         -s|--session) session="${2:-}"; shift 2 ;;
         -s=*)         session="${1#*=}"; shift ;;
         --session=*)  session="${1#*=}"; shift ;;
+        --envelope)   envelope=true; shift ;;
         --)           shift; break ;;
         -*)
           echo "clawctl $cmd: unknown flag '$1'" >&2; exit 2 ;;
@@ -247,8 +253,13 @@ case "$cmd" in
       esac
     done
 
+    if [ "$envelope" = "true" ] && [ "$is_stream" = "true" ]; then
+      echo "clawctl stream: --envelope not yet supported (see US-007)" >&2
+      exit 2
+    fi
+
     if [ "${1:-}" = "" ]; then
-      echo "usage: clawctl $cmd [-s <session-key>] <agent> [<text>]   (text from stdin if omitted)" >&2
+      echo "usage: clawctl $cmd [-s <session-key>] [--envelope] <agent> [<text>]   (text from stdin if omitted)" >&2
       echo "       agent = 'default' or a specific agent slug" >&2
       exit 2
     fi
@@ -256,6 +267,55 @@ case "$cmd" in
     _validate_agent "$agent" || exit $?
 
     if [ "$#" -gt 0 ]; then text="$*"; else text="$(cat)"; fi
+
+    if [ "$envelope" = "true" ]; then
+      tp="$(_traceparent)"
+      body="$(mktemp)"
+      red_out="$(mktemp)"
+      trap 'rm -f "$body" "$red_out"' EXIT
+      _chat "$agent" false "$session" "$text" "$tp" > "$body"
+
+      jq -r '.choices[0].message.content // ""' "$body" \
+        | _redact "$agent" > "$red_out"
+
+      finish_raw=$(jq -r '.choices[0].finish_reason // "stop"' "$body")
+      case "$finish_raw" in
+        stop|length|content_filter|error) finish="$finish_raw" ;;
+        tool_calls|function_call|tool_call) finish="tool_call" ;;
+        *) finish="stop" ;;
+      esac
+
+      in_tok=$(jq -r '.usage.prompt_tokens // empty' "$body")
+      out_tok=$(jq -r '.usage.completion_tokens // empty' "$body")
+      tot_tok=$(jq -r '.usage.total_tokens // empty' "$body")
+
+      jq -n \
+        --arg agent "openclaw/$agent" \
+        --arg tp "$tp" \
+        --arg session "$session" \
+        --arg input "$text" \
+        --rawfile output "$red_out" \
+        --arg finish "$finish" \
+        --arg in_tok "$in_tok" \
+        --arg out_tok "$out_tok" \
+        --arg tot_tok "$tot_tok" \
+        '{
+           envelope_version: "1",
+           kind: "tool_response",
+           agent: $agent,
+           traceparent: $tp,
+           input: { role: "user", content: $input },
+           output: $output,
+           redactions: [],
+           usage: ({}
+             | (if $in_tok  != "" then .input_tokens  = ($in_tok|tonumber)  else . end)
+             | (if $out_tok != "" then .output_tokens = ($out_tok|tonumber) else . end)
+             | (if $tot_tok != "" then .total_tokens  = ($tot_tok|tonumber) else . end)),
+           finish_reason: $finish
+         }
+         + (if $session != "" then {session_id: $session} else {} end)'
+      exit 0
+    fi
 
     if [ "$is_stream" = "true" ]; then
       raw="$(mktemp)"
@@ -469,7 +529,9 @@ clawctl — openclaw client (host: ${CLAWCTL_HOST:-<unset>})
 
   clawctl health                              gateway liveness
   clawctl models                              list registered agents (60s cache)
-  clawctl msg [-s SESSION] AGENT [TEXT]       chat with agent; stdin if no text
+  clawctl msg [-s SESSION] [--envelope] AGENT [TEXT]
+                                              chat with agent; stdin if no text
+                                              --envelope emits a v1 ToolResponse JSON document
   clawctl stream [-s SESSION] AGENT [TEXT]    same, SSE; output buffered + redacted
   clawctl raw METHOD PATH [curl-args]         arbitrary call with auth + traceparent
   clawctl cli SUBCOMMAND...                   run \`openclaw …\` over SSH on host

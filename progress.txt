@@ -41,3 +41,10 @@ Added test/cli-hardening.sh with a fake-ssh shim that exercises 12 checks
 -n + shellcheck (severity=warning) pass on clawctl, install.sh, and the
 new test.
 ---
+## US-006: Add --envelope flag to bash `clawctl msg`
+Iteration: 2026-05-09T20:04:10Z
+Status: done
+Files changed: clawctl, test/envelope-msg.sh, prd.json
+Notes: _chat now takes an optional 5th traceparent arg so the msg envelope path can bind the stderr trace-id into the JSON. redactions[] is emitted as [] for now — populating it from _redact hits is US-008. --envelope on stream is rejected with exit 2 pointing at US-007.
+---
+
