@@ -6,6 +6,22 @@ Drive openclaw via the existing `clawctl` wrapper (https://github.com/tomstagl/c
 
 Task: $ARGUMENTS
 
+## Binary check (run first)
+
+Before doing anything else, run:
+
+```bash
+command -v clawctl
+```
+
+If `clawctl` is not found, immediately print this install one-liner and stop — do NOT attempt raw `curl` against the gateway:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/tomstagl/clawctl/main/install/install.sh | bash
+```
+
+Then ask the user to re-open their shell and re-run the slash command.
+
 ## Setup (one-time, user)
 
 The wrapper reads three env vars. The user MUST export `CLAWCTL_HOST`; the rest have sensible defaults:
@@ -22,7 +38,7 @@ export CLAWCTL_JAEGER_UI="http://<jaeger-host>:16686"      # for `clawctl trace`
 
 If `clawctl health` fails with `connection refused` or `DNS resolution failed`, the user has not pointed `CLAWCTL_HOST` at a reachable gateway. Stop and ask them to set it. Do NOT guess a hostname.
 
-If `clawctl` itself is not on PATH, point the user at https://github.com/tomstagl/clawctl — install via `brew install tomstagl/clawctl/clawctl` or the curl installer. Don't try to fall back to raw `curl`.
+If `clawctl` itself is not on PATH, run the binary check at the top of this prompt and print the install one-liner.
 
 ## Wrapper surface (already installed)
 
