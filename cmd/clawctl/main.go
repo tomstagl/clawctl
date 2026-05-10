@@ -38,6 +38,8 @@ func main() {
 		healthCmd(cfg)
 	case "models":
 		modelsCmd(cfg)
+	case "msg":
+		msgCmd(cfg, args[1:])
 	case "raw":
 		rawCmd(cfg, args[1:])
 	case "_redact":
@@ -62,9 +64,10 @@ func printHelp(w io.Writer, cfg config.Config) {
 
   clawctl health                              gateway liveness
   clawctl models                              list registered agents (60s cache)
-  clawctl msg [-s SESSION] [--envelope] AGENT [TEXT]
+  clawctl msg [-s SESSION] [--text] AGENT [TEXT]
                                               chat with agent; stdin if no text
-                                              --envelope emits a v1 ToolResponse JSON document
+                                              default: emits a v1 ToolResponse JSON document
+                                              --text: emits the plain content string (bash parity)
   clawctl stream [-s SESSION] [--envelope] AGENT [TEXT]
                                               same, SSE; output buffered + redacted
                                               --envelope emits NDJSON ToolStreamChunks + final ToolResponse

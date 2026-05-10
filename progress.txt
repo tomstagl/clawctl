@@ -247,3 +247,31 @@ inside the repo because /tmp-rooted Mach-O binaries fail with
 the same TODO; deferred). go vet, go test ./..., shellcheck, bash -n
 all clean (CGO_ENABLED=0 — same as CI).
 ---
+
+## US-018: Implement Go `clawctl msg` emitting envelope by default
+Iteration: 2026-05-10T10:30:00Z
+Status: done
+Files changed: cmd/clawctl/msg.go (new), cmd/clawctl/msg_test.go (new), cmd/clawctl/main.go (dispatch + help), prd.json
+Notes: Typed-binary contract is the inverse of bash: `clawctl msg AGENT
+TEXT` emits a v1 ToolResponse envelope by default; `--text` opts out
+to bash-default plain content. Single POST to /v1/chat/completions
+via api.Client.Do (no retry — chat is non-idempotent), Content-Type
+forwarded via Headers so api stays verb-agnostic. Redaction is run
+before envelope emission and the per-hit list flows into
+ToolResponse.redactions[]; stderr WARNING + audit append (US-008
+contract) still fire so human users keep the legacy signal. Empty
+hits marshal as `[]` (not null) by returning a non-nil empty slice.
+finish_reason normalised to the v1 enum (tool_calls/function_call →
+tool_call; unknown → stop) — mirrors the bash case-statement so
+envelopes from either binary share a vocabulary. Emitted envelope is
+self-validated via envelope.Validate before stdout write so a future
+schema/struct drift trips a unit test instead of a downstream
+consumer. 11 unit tests cover: missing host, missing agent, unknown
+flag, default-emits-envelope (auth + traceparent + payload shape +
+redactions:[] presence + trace-id stderr), --text fallback, -s
+session flow-through (payload.user + envelope.session_id), stdin
+fallback when text is omitted, HTTP 401 → exit 22 with decoded
+gateway message, ECONNREFUSED → exit 7, dt0c01 redaction populates
+redactions[] + WARNING + audit-file. go vet, go test ./..., bash -n,
+shellcheck all clean (CGO_ENABLED=0).
+---
