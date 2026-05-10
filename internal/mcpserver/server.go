@@ -101,6 +101,10 @@ type Implementation struct {
 // content channel instead of a transport-level reject.
 func Build(impl *Implementation, agents []Agent, call CallHandler) (*mcp.Server, error) {
 	srv := mcp.NewServer(buildImpl(impl), nil)
+	// Only read-only agent tools are registered here. Any future mutating
+	// tool (e.g. wrapping the cli/SSH surface) MUST be gated by an
+	// --unsafe-mutating flag on clawctl mcp; never register one
+	// unconditionally.
 	for _, a := range agents {
 		if a.Slug() == "" {
 			return nil, fmt.Errorf("mcpserver: agent %q has empty slug after prefix strip", a.ID)

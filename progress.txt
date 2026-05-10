@@ -36,3 +36,10 @@ Status: done
 Files changed: internal/config/config.go (JSONOutput field + CLAWCTL_OUTPUT=json), cmd/clawctl/jsonout.go (new: envelope types + helpers), cmd/clawctl/main.go (--json flag parsing + help update), cmd/clawctl/health.go (JSON mode branches), cmd/clawctl/models.go (JSON mode branches), cmd/clawctl/msg.go (JSON mode + msgJSONData + msgAPIErrorDetails), cmd/clawctl/verify.go (verifyDispatch extracted + buffer-capture JSON mode), cmd/clawctl/trace.go (JSON mode + traceJSONData + spanCount), cmd/clawctl/json_test.go (new: 10 tests), docs/cli-contract.md (--json section with data shapes and examples), prd.json
 Notes: Verify uses buffer-capture approach to avoid rewriting sub-handlers; capErr must be read before io.Copy drains it. Trace always exits 0 (best-effort) so JSON mode never emits an error envelope from Jaeger unreachability.
 ---
+
+## US-006: clawctl mcp — document guard rails for mutating ops
+Iteration: 2026-05-10T22:00:00Z
+Status: done
+Files changed: docs/mcp.md (Security section added), internal/mcpserver/server.go (comment at tool-registration site), prd.json
+Notes: No code changes required; cli subcommand was already absent from mcp.go. Added docs and a comment to make the exclusion policy explicit and self-documenting for future contributors.
+---

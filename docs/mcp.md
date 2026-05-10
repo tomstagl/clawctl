@@ -202,6 +202,16 @@ The mapping from transport failure to envelope code mirrors the curl-aligned exi
 - Tool calls hang — check `clawctl health` first. The MCP subprocess inherits `CLAWCTL_TIMEOUT` (default 60s); long-running tool calls should set a higher timeout in the parent shell.
 - Want to see what's happening on the wire? Set `CLAWCTL_LOG=json` and tail the Claude Code MCP log; one JSON line per call lands on the subprocess's stderr with `traceparent`, `agent`, `latency_ms`, and `redactions_count`.
 
+## Security
+
+`clawctl mcp` exposes **read-only** tools only. The `cli` subcommand — which SSHes to the gateway host and runs mutating `openclaw` operations — is intentionally excluded from the MCP surface.
+
+**Why:** mutating SSH-driven ops (cron management, session teardown, fleet restarts) require a human in the loop to confirm intent. Exposing them over MCP would allow any connected LLM to trigger irreversible host-side changes without an interactive confirmation step.
+
+**Future opt-in path:** if a mutating MCP tool is ever added, it must be gated by an explicit `--unsafe-mutating` flag on `clawctl mcp`. The flag must be absent by default; the server must refuse to register any mutating tool unless the flag is present; and the `tools/list` response must annotate each mutating tool with a human-readable warning. This design forces the operator to make an affirmative choice at startup rather than discovering the exposure at call time.
+
+Until `--unsafe-mutating` exists, no path in `clawctl mcp` should register or invoke `cli`-equivalent functionality.
+
 ## Why a typed binary owns this
 
 The `clawctl mcp` server lives in the typed Go binary, not the bash MVP, because the v1 envelope contract is enforced at compile time there (struct tags + `go:embed schemas/envelope.v1.json` + `envelope.Validate`). A bash MCP server would have to re-derive every shape on every emit and would drift the moment the schema gained a field. See [`docs/typed-binary-language.md`](typed-binary-language.md) for the full Go-vs-Rust decision.
