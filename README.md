@@ -42,15 +42,23 @@ brew install oc
 curl -fsSL https://raw.githubusercontent.com/tomstagl/clawctl/main/install/install.sh | bash
 ```
 
+The installer detects your OS + architecture (`darwin-arm64`, `darwin-amd64`, `linux-amd64`, `linux-arm64`), downloads the matching binary from the latest GitHub release, verifies it against the published `SHA256SUMS`, and drops it at `/usr/local/bin/clawctl` (configurable via `CLAWCTL_INSTALL_DIR`). It refuses to overwrite anything at the target path that does not respond to `clawctl version`, so an existing alias to `kubectl`/OpenShift's `oc` won't get clobbered.
+
+To pin a specific tag instead of `latest`:
+
+```bash
+CLAWCTL_VERSION=v1.2.3 curl -fsSL https://raw.githubusercontent.com/tomstagl/clawctl/main/install/install.sh | bash
+```
+
+The installer does not touch your Keychain — you store the bearer token yourself (see below).
+
 ### From source
 
 ```bash
 git clone https://github.com/tomstagl/clawctl.git
-cd oc
-./install/install.sh
+cd clawctl
+go build -o /usr/local/bin/clawctl ./cmd/clawctl
 ```
-
-The installer copies `clawctl` to `~/.local/bin/oc` and prints a PATH check. It does not touch your Keychain — you store the bearer token yourself (see below).
 
 ### SSH connection reuse (recommended for `clawctl cli`)
 

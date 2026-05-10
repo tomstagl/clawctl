@@ -554,3 +554,17 @@ present before this PR; flagging here so it doesn't get blamed on the
 mcp doc. shellcheck (severity=warning) on clawctl + install scripts
 clean; go vet ./... clean; bash -n on the same trio clean.
 ---
+
+## US-029: Add multi-arch release workflow
+Iteration: 2026-05-10T15:05:00Z
+Status: done
+Files changed: .github/workflows/release.yml, cmd/clawctl/main.go, cmd/clawctl/main_test.go, prd.json
+Notes: Workflow gates the 4-arch matrix on actionlint + go test/vet, stamps version/commit via ldflags, and uploads SHA256SUMS alongside binaries (US-030 will consume it). Extracted printVersion() so the `clawctl <ver> (<commit>)` format is unit-tested — the install script in US-030 will heuristic-match this string.
+---
+
+## US-030: Add install/install.sh resolver
+Iteration: 2026-05-10T15:30:00Z
+Status: done
+Files changed: install/install.sh, test/install-resolver.sh, README.md, prd.json
+Notes: Rewrote install.sh as a release-binary resolver. Detects (uname -s, uname -m), maps to {darwin,linux}-{amd64,arm64}, downloads the artifact + SHA256SUMS from GitHub via the /releases/latest/download/ pattern (no API call → no token needed), verifies the checksum, then installs to /usr/local/bin/clawctl. Refuses to overwrite anything at the target whose `version` output doesn't contain "clawctl". CLAWCTL_INSTALL_DIR / CLAWCTL_VERSION / CLAWCTL_REPO / CLAWCTL_DOWNLOAD_BASE knobs included; the last is what makes the test mockable. test/install-resolver.sh shadows curl + uname + sudo on PATH and table-tests 7 scenarios → 19/19 checks pass. Shellcheck clean (severity=warning). README "From source" section now points at `go build` since install.sh no longer has a from-source path.
+---
