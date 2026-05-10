@@ -129,8 +129,13 @@ jobs:
 
   envelope:
     runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
       - name: Cache npm (ajv-cli)
         uses: actions/cache@v4
         with:
@@ -138,55 +143,89 @@ jobs:
           key: ajv-cli-v5-${{ runner.os }}
       - name: Install deps (python3, jq, curl)
         run: sudo apt-get install -y python3 jq curl
+      - name: Build Go binary
+        run: go build -o "$RUNNER_TEMP/clawctl-go" ./cmd/clawctl
       - name: validate-fixtures.sh
         id: fixtures
         continue-on-error: true
         run: bash test/validate-fixtures.sh
-      - name: envelope-msg.sh
-        id: msg
+      - name: envelope-msg.sh (bash)
+        id: msg_bash
         continue-on-error: true
         run: bash test/envelope-msg.sh
-      - name: envelope-stream.sh
-        id: stream
+      - name: envelope-stream.sh (bash)
+        id: stream_bash
         continue-on-error: true
         run: bash test/envelope-stream.sh
-      - name: envelope-redacted.sh
-        id: redacted
+      - name: envelope-redacted.sh (bash)
+        id: redacted_bash
         continue-on-error: true
         run: bash test/envelope-redacted.sh
+      - name: envelope-msg.sh (go)
+        id: msg_go
+        continue-on-error: true
+        run: BIN="$RUNNER_TEMP/clawctl-go" bash test/envelope-msg.sh
+      - name: envelope-stream.sh (go)
+        id: stream_go
+        continue-on-error: true
+        run: BIN="$RUNNER_TEMP/clawctl-go" bash test/envelope-stream.sh
+      - name: envelope-redacted.sh (go)
+        id: redacted_go
+        continue-on-error: true
+        run: BIN="$RUNNER_TEMP/clawctl-go" bash test/envelope-redacted.sh
       - name: Fail if any envelope script failed
         if: always()
         run: |
           failed=0
           [ "${{ steps.fixtures.outcome }}" = "failure" ] && failed=1
-          [ "${{ steps.msg.outcome }}" = "failure" ] && failed=1
-          [ "${{ steps.stream.outcome }}" = "failure" ] && failed=1
-          [ "${{ steps.redacted.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.msg_bash.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.stream_bash.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.redacted_bash.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.msg_go.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.stream_go.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.redacted_go.outcome }}" = "failure" ] && failed=1
           exit $failed
 
   contract:
     runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
     steps:
       - uses: actions/checkout@v4
-      - name: exit-codes.sh
-        id: exitcodes
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Build Go binary
+        run: go build -o "$RUNNER_TEMP/clawctl-go" ./cmd/clawctl
+      - name: exit-codes.sh (bash)
+        id: exitcodes_bash
         continue-on-error: true
         run: bash test/exit-codes.sh
-      - name: cli-hardening.sh
-        id: hardening
+      - name: cli-hardening.sh (bash)
+        id: hardening_bash
         continue-on-error: true
         run: bash test/cli-hardening.sh
       - name: install-resolver.sh
         id: resolver
         continue-on-error: true
         run: bash test/install-resolver.sh
+      - name: exit-codes.sh (go)
+        id: exitcodes_go
+        continue-on-error: true
+        run: BIN="$RUNNER_TEMP/clawctl-go" bash test/exit-codes.sh
+      - name: cli-hardening.sh (go)
+        id: hardening_go
+        continue-on-error: true
+        run: BIN="$RUNNER_TEMP/clawctl-go" bash test/cli-hardening.sh
       - name: Fail if any contract script failed
         if: always()
         run: |
           failed=0
-          [ "${{ steps.exitcodes.outcome }}" = "failure" ] && failed=1
-          [ "${{ steps.hardening.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.exitcodes_bash.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.hardening_bash.outcome }}" = "failure" ] && failed=1
           [ "${{ steps.resolver.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.exitcodes_go.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.hardening_go.outcome }}" = "failure" ] && failed=1
           exit $failed
 
   go:

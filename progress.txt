@@ -38,3 +38,9 @@ Status: done
 Files changed: test/envelope-msg.sh, test/envelope-stream.sh, test/envelope-redacted.sh, test/exit-codes.sh, test/cli-hardening.sh, prd.json
 Notes: Used ${VAR:+"$VAR"} expansion for ENVELOPE_FLAG/TEXT_FLAG in envelope scripts to handle bash vs Go flag inversion (bash: --envelope activates envelope; Go: envelope is default, --text for text-only). Guarded curl-shadow section in exit-codes.sh since Go binary uses net/http not curl. All 5 scripts pass with default bash BIN (37+12+13+11+19 checks). bash -n and shellcheck (info-only SC2329) clean.
 ---
+## US-007: Run envelope and contract scripts dual-pass (bash + Go) in CI
+Iteration: 2026-05-10T22:00:00Z
+Status: done
+Files changed: .github/workflows/ci.yml, prd.json
+Notes: Added Go setup (actions/setup-go@v5) and binary build step to both envelope and contract jobs; renamed bash steps with (bash) suffix, added paired (go) steps passing BIN=$RUNNER_TEMP/clawctl-go; validate-fixtures.sh and install-resolver.sh remain single-pass (no binary dependency). actionlint, go vet, go test all pass.
+---
