@@ -48,6 +48,8 @@ func main() {
 		cliCmd(cfg, args[1:])
 	case "verify":
 		verifyCmd(cfg, args[1:])
+	case "trace":
+		traceCmd(cfg, args[1:])
 	case "_redact":
 		// Hidden parity-test surface (mirrors the bash dispatcher's
 		// `_redact)` branch). Not advertised in help.

@@ -348,3 +348,34 @@ Status: done
 Files changed: cmd/clawctl/main.go (dispatch verify), cmd/clawctl/verify.go (new), cmd/clawctl/verify_test.go (new), test/parity-verify.sh (new), prd.json (mark US-022 passing)
 Notes: Ported verify {commit,pr,issue,file,help} to Go matching the bash dispatcher byte-for-byte. Exit-code contract (0 verified, 1 unverified, 2 usage/ambiguous) preserved across all four kinds. `commit` shells out to `git cat-file -t` and checks for "commit"; mismatched types (e.g. tree, tag) read as unverified to match the bash exact-string compare. `pr`/`issue` shell out to `gh ... view --json state,url,title` and emit `verified: STATE — TITLE — URL` with the same em dash separator as the bash `jq -r` template. `file` mirrors bash semantics: `[ -e $path ]` → `os.Lstat` (matches bash's behaviour for symlinks: a dangling symlink reads as present in working tree), and `git cat-file -e ref:path` for the at-ref form. Added 18 unit tests in verify_test.go covering happy and sad paths for each kind, including missing-arg branches and the bad-spec edge case (`o/r` and `o/r#` both fail with the same usage message bash prints). Reused the cli_test.go PATH-shim strategy to fake `git` and `gh` end-to-end without pulling in a Go-side test dependency. test/parity-verify.sh runs both binaries against a fixture git repo with one committed file and a fake-gh shim on PATH; 54 paired (stdout+stderr+exit) assertions across 18 cases all match byte-for-byte. shellcheck clean, bash -n clean, go vet clean, go test ./... clean. Trip hazard: macOS Tahoe go1.22.12 internal linker emits binaries missing LC_UUID — set CGO_ENABLED=0 (or use -ldflags="-linkmode=external") for `go test` to avoid the dyld abort.
 ---
+
+## US-023: Implement Go `clawctl trace` parity
+Iteration: 2026-05-10T11:00:00Z
+Status: done
+Files changed: cmd/clawctl/trace.go (new), cmd/clawctl/trace_test.go (new), cmd/clawctl/main.go (dispatch trace), test/parity-trace.sh (new), prd.json
+Notes: Ported `clawctl trace` to Go reusing the bash subcommand's exact
+header layout ("trace-id: …\nUI:       <ui>/trace/<id>\n\n") and span-row
+format ("  %-24s %-40s %7.0fms"). Round-trip parity test (test/parity-trace.sh)
+runs both binaries against a Python http.server mocking
+/jaeger/api/traces/<id> with four fixture bodies (happy/errors/no-spans/many)
+and 21 paired stdout+stderr+exit assertions all match byte-for-byte. The
+`%7.0fms` format relies on Go's strconv.FormatFloat using the same
+round-half-to-even rule Python's f-string `:.0f` uses, so durations like
+1234.5 µs/1000 round identically — verified empirically through the parity
+diffs. Best-effort posture preserved: Jaeger unreachable / non-JSON body /
+HTTP 4xx all return exit 0 after the header is printed (matches the
+"trace  best-effort: returns 0 even when Jaeger is unreachable" row in
+`clawctl help`); only missing trace-id arg or unset CLAWCTL_JAEGER_UI return
+exit 2. Used http.DefaultClient + a 5s context.WithTimeout wrapper inside
+jaegerFetch to mirror bash's `curl --max-time 5` ceiling without taking on
+internal/transport/api (Jaeger is unauthenticated so the chat-path
+abstractions don't apply). 11 unit tests cover: missing arg, missing
+JAEGER_UI, happy 2-span, no-spans, errors[] populated, errors[] msg
+fallback, malformed JSON, unreachable host, 35→30 span limit, missing
+process fallback ("?"), missing operationName fallback ("?"). go vet clean,
+CGO_ENABLED=0 go test ./... clean across all 9 packages, bash -n + shellcheck
+(clawctl, install/install.sh, test/parity-trace.sh) all clean. Trip hazard
+worth flagging: Python's http.server in a test does an asynchronous TCP
+shutdown, so the cleanup trap waits on $SERVER_PID — copied that pattern
+verbatim from test/parity-health.sh to keep CI fast.
+---
