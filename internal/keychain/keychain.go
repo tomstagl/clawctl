@@ -1,11 +1,8 @@
-// Package keychain reads bearer tokens from the macOS Keychain. It shells
-// out to `security find-generic-password -w` so the token never lives in
-// process memory longer than necessary and so we never have to re-implement
-// keychain access ourselves.
+// Package keychain reads bearer tokens from the platform credential store.
+// CLAWCTL_TOKEN_CMD is honoured on every platform as an override; falling back
+// to a platform-specific backend (macOS Keychain, Linux secret-tool/pass).
 //
-// This is the only token source clawctl supports; design principle #2
-// forbids env-var or on-disk fallbacks. Linux/Windows are explicitly out of
-// scope.
+// Design principle #2 is preserved: CLAWCTL_TOKEN env var is never consulted.
 package keychain
 
 import (
@@ -16,14 +13,13 @@ import (
 	"strings"
 )
 
-// ErrNotFound is returned when the keychain has no matching item. Callers
-// can branch on this to print a remediation message instead of the raw
-// `security` exit details.
+// ErrNotFound is returned when the credential store has no matching item.
+// Callers can branch on this to print a remediation hint.
 var ErrNotFound = errors.New("keychain: item not found")
 
-// Token reads the password for the generic-password item identified by
-// (service, account). When account is empty, the current user from $USER is
-// used to match the bash script's `-a "$USER"` invocation.
+// Token reads the bearer token for (service, account) from the credential
+// store. When account is empty the current $USER is used. CLAWCTL_TOKEN_CMD,
+// if set, is always tried first on every platform.
 func Token(service, account string) (string, error) {
 	if service == "" {
 		return "", errors.New("keychain: service name required")
@@ -31,20 +27,26 @@ func Token(service, account string) (string, error) {
 	if account == "" {
 		account = os.Getenv("USER")
 	}
+	if cmd := os.Getenv("CLAWCTL_TOKEN_CMD"); cmd != "" {
+		return tokenFromCmd(cmd)
+	}
+	return platformToken(service, account)
+}
 
-	cmd := exec.Command("security", "find-generic-password", "-s", service, "-a", account, "-w")
-	out, err := cmd.Output()
+// tokenFromCmd runs an arbitrary shell command and returns trimmed stdout.
+func tokenFromCmd(cmd string) (string, error) {
+	out, err := exec.Command("sh", "-c", cmd).Output()
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) {
-			// `security` exits 44 when the item is missing; surface a typed error
-			// so callers can produce a tailored message without re-grepping stderr.
-			if ee.ExitCode() == 44 {
-				return "", ErrNotFound
-			}
-			return "", fmt.Errorf("keychain: security exit %d: %s", ee.ExitCode(), strings.TrimSpace(string(ee.Stderr)))
+			return "", fmt.Errorf("keychain: CLAWCTL_TOKEN_CMD exit %d: %s",
+				ee.ExitCode(), strings.TrimSpace(string(ee.Stderr)))
 		}
-		return "", fmt.Errorf("keychain: %w", err)
+		return "", fmt.Errorf("keychain: CLAWCTL_TOKEN_CMD: %w", err)
 	}
-	return strings.TrimRight(string(out), "\n"), nil
+	tok := strings.TrimSpace(string(out))
+	if tok == "" {
+		return "", errors.New("keychain: CLAWCTL_TOKEN_CMD produced empty output")
+	}
+	return tok, nil
 }
