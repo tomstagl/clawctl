@@ -184,3 +184,32 @@ runs 23 assertions across 4 cases (GET parity + W3C traceparent shape
 body forwarded; CLAWCTL_HOST unset → exit 2). go vet, go test, and the
 existing parity-health/parity-models suites all clean.
 ---
+
+## US-016: Implement Go SSE parser with fuzz seeds
+Iteration: 2026-05-10T01:00:00Z
+Status: done
+Files changed: internal/sse/sse.go (new), internal/sse/sse_test.go (new), .github/workflows/ci.yml, prd.json
+Notes: New internal/sse package implements an SSE wire parser per the
+HTML living-standard spec. Pure framing layer — knows nothing about
+OpenAI's "data: [DONE]" sentinel, so streaming subcommands (US-019)
+own the payload semantics. Parser uses a custom byte-level readLine
+that handles all three SSE line terminators (\n, \r\n, bare \r) over
+a bufio.Reader, which transparently handles both split-mid-event
+network fragmentation and split-mid-UTF-8 codepoint reads (Go strings
+are byte sequences, so as long as we never decode runes during framing
+the bytes round-trip verbatim). Strict-spec dispatch: only event/data
+fields arm dispatch (id/retry update parser state without firing);
+comments are ignored entirely; trailing partial events at EOF are
+flushed instead of discarded for debuggability. 12 unit tests cover
+all four required edge cases explicitly plus simple, multiline, CRLF,
+comments, id-persistence, leading-space stripping, and an OpenAI-shape
+smoke test. FuzzParseSSE seeded with 8 inputs exercising every edge
+case combo; ran 648k execs in 6.5s locally without surfacing any
+crashes or hangs (12 workers on this M1). Added a go: job to
+.github/workflows/ci.yml — vet + test + 5s fuzz — so the acceptance
+criterion's "runs cleanly for at least 5 seconds in CI" lands on
+something concrete; this is the first Go CI job in the repo. Trip-
+hazard: if a future change makes Next() loop without consuming bytes,
+the fuzz target's 16384-event cap will fail-fast rather than hang the
+run. go vet, go test ./..., bash -n, shellcheck all clean.
+---

@@ -25,3 +25,19 @@ jobs:
         run: bash -n ./clawctl
       - name: bash -n install/install.sh
         run: bash -n ./install/install.sh
+
+  go:
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./...
+      - name: fuzz SSE parser
+        run: go test -run=^$ -fuzz=FuzzParseSSE -fuzztime=5s ./internal/sse/
