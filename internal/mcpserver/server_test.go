@@ -80,7 +80,7 @@ func TestInputSchema_MirrorsEnvelopeShape(t *testing.T) {
 	if !ok {
 		t.Fatalf("properties not a map: %T", schema["properties"])
 	}
-	for _, k := range []string{"text", "session_id", "tool_choice"} {
+	for _, k := range []string{"text", "session_id", "tool_choice", "streaming"} {
 		if _, ok := props[k]; !ok {
 			t.Errorf("properties missing %q", k)
 		}
@@ -89,6 +89,10 @@ func TestInputSchema_MirrorsEnvelopeShape(t *testing.T) {
 	enum, _ := tc["enum"].([]any)
 	if len(enum) != 3 {
 		t.Errorf("tool_choice.enum = %v, want 3 values (auto/none/required)", enum)
+	}
+	streaming, _ := props["streaming"].(map[string]any)
+	if streaming["type"] != "boolean" {
+		t.Errorf("streaming.type = %v, want boolean", streaming["type"])
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -24,7 +25,19 @@ import (
 // result so MCP clients can correlate spans without parsing the
 // envelope. Kept dotted (clawctl.traceparent) to avoid colliding with
 // the slash-namespaced keys some clients reserve under _meta/mcp/*.
-const metaKeyTraceparent = "clawctl.traceparent"
+const (
+	metaKeyTraceparent = "clawctl.traceparent"
+	// metaKeyStreamChunk holds the v1 ToolStreamChunk envelope embedded
+	// in a notifications/progress message. Marshalled as raw JSON so the
+	// client can validate it against schemas/envelope.v1.json without an
+	// intermediate decode/encode round-trip.
+	metaKeyStreamChunk = "clawctl.stream_chunk"
+	// metaKeyStreamSequence is the 0-based ordinal of the chunk within
+	// the stream. Mirrors envelope.index but lives at the protocol layer
+	// so consumers that only inspect _meta still see ordering even if
+	// they skip the embedded envelope.
+	metaKeyStreamSequence = "clawctl.stream_sequence"
+)
 
 // mcpCallArgs is the JSON shape of tools/call arguments. Field set
 // mirrors internal/mcpserver.inputSchema() one-to-one so the schema and
@@ -33,6 +46,7 @@ type mcpCallArgs struct {
 	Text       string `json:"text"`
 	SessionID  string `json:"session_id,omitempty"`
 	ToolChoice string `json:"tool_choice,omitempty"`
+	Streaming  bool   `json:"streaming,omitempty"`
 }
 
 // newMCPCallHandler returns the CallHandler that powers tools/call.
@@ -73,6 +87,10 @@ func newMCPCallHandler(cfg config.Config, client *api.Client, gwToken func() str
 		if args.Text == "" {
 			return mcpErrorResult(tp.String(), agent, "usage.invalid_argument",
 				"tools/call: 'text' is required and must be non-empty", nil, 2), nil
+		}
+
+		if args.Streaming {
+			return runMCPStreamingCall(ctx, cfg, client, gwToken, agent, args, req, tp)
 		}
 
 		payload, err := buildChatPayload(agent.Slug(), args.Text, args.SessionID, false)
@@ -135,6 +153,186 @@ func newMCPCallHandler(cfg config.Config, client *api.Client, gwToken func() str
 			StructuredContent: resp,
 		}, nil
 	}
+}
+
+// runMCPStreamingCall executes the SSE-backed streaming flavour of
+// tools/call. It posts the chat-completions request with stream=true,
+// buffers the SSE blob (so redaction stays boundary-safe — same trade-off
+// the bash and Go `clawctl stream` make), then walks the parsed chunks:
+// each becomes one MCP `notifications/progress` message addressed to the
+// caller-supplied progressToken, in order. The final ToolResponse is
+// returned as the tool result so MCP clients that don't subscribe to
+// progress still see the full output.
+//
+// Two redaction passes guard against secret patterns crossing SSE chunk
+// boundaries: per-chunk and aggregate. When the per-chunk redacted
+// concatenation matches the aggregate-redacted text, we know no secret
+// straddled a boundary and can emit one progress per chunk verbatim.
+// Otherwise we coalesce into a single boundary-safe progress payload —
+// emitting per-chunk in that case would either leak the unredacted bytes
+// or split a redaction marker, both of which break consumers.
+//
+// When the client did not supply a progressToken on the request, we
+// honour the streaming flag (still hit the SSE backend, still parse and
+// validate chunks) but suppress the notifications: per the MCP spec,
+// servers MUST NOT send progress for requests that did not opt in.
+func runMCPStreamingCall(
+	ctx context.Context,
+	cfg config.Config,
+	client *api.Client,
+	gwToken func() string,
+	agent mcpserver.Agent,
+	args mcpCallArgs,
+	req *mcp.CallToolRequest,
+	tp trace.Traceparent,
+) (*mcp.CallToolResult, error) {
+	payload, err := buildChatPayload(agent.Slug(), args.Text, args.SessionID, true)
+	if err != nil {
+		return mcpErrorResult(tp.String(), agent, "envelope.invalid",
+			"build chat payload: "+err.Error(), nil, 1), nil
+	}
+	body, err := client.Do(ctx, api.Request{
+		Method:      http.MethodPost,
+		Path:        "/v1/chat/completions",
+		Body:        payload,
+		Authed:      true,
+		Traceparent: tp.String(),
+		Headers:     []string{"Content-Type: application/json", "Accept: text/event-stream"},
+		Retry:       false,
+	})
+	if err != nil {
+		code, msg, status, exit := classifyMCPGatewayError(err, cfg)
+		return mcpErrorResult(tp.String(), agent, code, msg, status, exit), nil
+	}
+
+	parsed, perr := parseSSEStream(body)
+	if perr != nil {
+		return mcpErrorResult(tp.String(), agent, "gateway.internal",
+			"parse SSE stream: "+perr.Error(), nil, 1), nil
+	}
+	if parsed.Err != "" {
+		return mcpErrorResult(tp.String(), agent, "gateway.internal",
+			"stream error: "+parsed.Err, nil, 1), nil
+	}
+
+	gw := gwToken()
+	perChunk := make([]redact.Result, 0, len(parsed.Chunks))
+	var perChunkConcat strings.Builder
+	for _, c := range parsed.Chunks {
+		r := redact.Apply(c, redact.Options{GwToken: gw, Disable: cfg.NoRedact})
+		perChunk = append(perChunk, r)
+		perChunkConcat.WriteString(r.Text)
+	}
+	aggResult := redact.Apply(strings.Join(parsed.Chunks, ""), redact.Options{GwToken: gw, Disable: cfg.NoRedact})
+	if kinds := aggResult.Kinds(); len(kinds) > 0 && cfg.CacheDir != "" {
+		_ = os.MkdirAll(cfg.CacheDir, 0o755)
+		_ = redact.AppendAudit(filepath.Join(cfg.CacheDir, "last-redaction"), agent.Slug(), kinds)
+	}
+
+	chunks := buildStreamingChunks(agent.ID, args.SessionID, tp.String(), perChunk, aggResult, perChunkConcat.String())
+
+	progressToken := mcpProgressToken(req)
+	if progressToken != nil && req.Session != nil {
+		total := float64(len(chunks))
+		for i, chunk := range chunks {
+			enc, err := json.Marshal(chunk)
+			if err != nil {
+				return mcpErrorResult(tp.String(), agent, "envelope.invalid",
+					"marshal stream chunk: "+err.Error(), nil, 1), nil
+			}
+			notifyErr := req.Session.NotifyProgress(ctx, &mcp.ProgressNotificationParams{
+				ProgressToken: progressToken,
+				Progress:      float64(i + 1),
+				Total:         total,
+				Meta: mcp.Meta{
+					metaKeyTraceparent:    tp.String(),
+					metaKeyStreamChunk:    json.RawMessage(enc),
+					metaKeyStreamSequence: i,
+				},
+			})
+			if notifyErr != nil {
+				return mcpErrorResult(tp.String(), agent, "gateway.internal",
+					"send progress notification: "+notifyErr.Error(), nil, 1), nil
+			}
+		}
+	}
+
+	resp := envelope.ToolResponse{
+		EnvelopeVersion: envelope.Version,
+		Kind:            envelope.KindToolResponse,
+		Agent:           agent.ID,
+		SessionID:       args.SessionID,
+		Traceparent:     tp.String(),
+		Input:           envelope.Input{Role: "user", Content: args.Text},
+		ToolChoice:      args.ToolChoice,
+		Output:          aggResult.Text,
+		Redactions:      toEnvelopeRedactions(aggResult.Hits),
+		Usage:           toEnvelopeUsage(parsed.Usage),
+		FinishReason:    mapFinishReason(parsed.FinishReason),
+	}
+	if err := envelope.Validate(resp); err != nil {
+		return mcpErrorResult(tp.String(), agent, "envelope.invalid",
+			"emitted envelope failed schema validation: "+err.Error(), nil, 1), nil
+	}
+	enc, err := json.Marshal(resp)
+	if err != nil {
+		return mcpErrorResult(tp.String(), agent, "envelope.invalid",
+			"marshal envelope: "+err.Error(), nil, 1), nil
+	}
+	return &mcp.CallToolResult{
+		Meta:              map[string]any{metaKeyTraceparent: tp.String()},
+		Content:           []mcp.Content{&mcp.TextContent{Text: string(enc)}},
+		StructuredContent: resp,
+	}, nil
+}
+
+// buildStreamingChunks turns the per-chunk + aggregate redactor passes
+// into the ordered slice of ToolStreamChunk envelopes the streaming
+// emitter ships as MCP progress notifications. The boundary-safety
+// reasoning is the same as cmd/clawctl/stream.go: when per-chunk
+// redaction sums to the aggregate-redacted text we emit one envelope per
+// chunk, otherwise we coalesce into a single chunk carrying the
+// boundary-safe redacted aggregate.
+func buildStreamingChunks(agentID, sessionID, traceparent string, perChunk []redact.Result, aggResult redact.Result, perChunkConcat string) []envelope.ToolStreamChunk {
+	if perChunkConcat == aggResult.Text {
+		out := make([]envelope.ToolStreamChunk, 0, len(perChunk))
+		for i, c := range perChunk {
+			out = append(out, envelope.ToolStreamChunk{
+				EnvelopeVersion: envelope.Version,
+				Kind:            envelope.KindToolStreamChunk,
+				Agent:           agentID,
+				SessionID:       sessionID,
+				Traceparent:     traceparent,
+				Index:           i,
+				Delta:           envelope.Delta{Content: c.Text},
+				Redactions:      toEnvelopeRedactions(c.Hits),
+				FinishReason:    nil,
+			})
+		}
+		return out
+	}
+	return []envelope.ToolStreamChunk{{
+		EnvelopeVersion: envelope.Version,
+		Kind:            envelope.KindToolStreamChunk,
+		Agent:           agentID,
+		SessionID:       sessionID,
+		Traceparent:     traceparent,
+		Index:           0,
+		Delta:           envelope.Delta{Content: aggResult.Text},
+		Redactions:      toEnvelopeRedactions(aggResult.Hits),
+		FinishReason:    nil,
+	}}
+}
+
+// mcpProgressToken pulls the progressToken the client supplied on the
+// initial tools/call. Per the MCP spec the server MUST NOT send progress
+// notifications when no token is set; nil is the explicit "do not
+// notify" signal that suppresses the per-chunk emission.
+func mcpProgressToken(req *mcp.CallToolRequest) any {
+	if req == nil || req.Params == nil {
+		return nil
+	}
+	return req.Params.GetProgressToken()
 }
 
 // mcpErrorResult builds a CallToolResult carrying a v1 ToolError

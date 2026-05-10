@@ -483,3 +483,41 @@ go vet ./... clean, CGO_ENABLED=0 go test ./... clean across all 12
 packages, bash -n + shellcheck (clawctl, install/install.sh,
 install/ssh-setup.sh) all clean.
 ---
+
+## US-027: Implement MCP streaming via progress notifications
+Iteration: 2026-05-10T09:01:46Z
+Status: done
+Files changed: internal/mcpserver/server.go, internal/mcpserver/server_test.go, cmd/clawctl/mcp_call.go, cmd/clawctl/mcp_stream_test.go, prd.json
+Notes: tools/call now accepts a `streaming` boolean in its input. When
+set, the call switches to the SSE-backed gateway path: chat-completions
+fires with stream=true, the response is buffered, parsed via the same
+parseSSEStream helper that backs `clawctl stream`, and each
+ToolStreamChunk is emitted as an MCP `notifications/progress` message
+with the chunk envelope embedded as raw JSON in _meta. The final
+ToolResponse remains the tool result so non-streaming MCP clients still
+see the aggregated output. Trip hazards: (a) per-MCP-spec, the server
+MUST NOT send progress notifications when the client did not supply a
+progressToken — we honour streaming on the gateway side regardless but
+suppress the per-chunk emission in that case (covered by
+TestRunMCP_ToolsCallStreamingNoProgressTokenSuppressesNotifications).
+(b) Redaction needs boundary safety: a secret pattern can straddle two
+SSE chunks. We mirror cmd/clawctl/stream.go's two-pass approach (per-
+chunk + aggregate) and coalesce into a single progress payload when the
+sums diverge — emitting per-chunk in that case would either leak the
+unredacted bytes or split a redaction marker. (c) The chunk envelope
+travels via _meta as json.RawMessage so the client can validate against
+schemas/envelope.v1.json without an intermediate decode/encode round-
+trip; the test re-marshals on receipt to stay insensitive to the
+transport's representation. (d) Total/Progress are both derived from
+the chunk count after redaction-coalescing, not from the raw SSE delta
+count, so consumers see a stable progress fraction even on the
+boundary-safe single-chunk path. End-to-end test
+TestRunMCP_ToolsCallStreamingEmitsProgressNotifications drives a real
+MCP client through the in-memory transport against the canonicalSSE
+fixture (3 deltas + finish + [DONE]) and asserts: 3 ordered progress
+notifications, byte-identical chunk content per delta, traceparent
+threaded into _meta, schema-valid envelopes, then a final ToolResponse
+with the concatenated output. go vet ./... clean; go test ./... clean
+across all 12 packages; bash -n + shellcheck on the bash entrypoint
+clean.
+---

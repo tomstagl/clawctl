@@ -146,9 +146,16 @@ func toolDescription(a Agent) string {
 }
 
 // inputSchema mirrors the v1 envelope's Input shape: a required text
-// prompt plus the two optional fields a caller may supply at the tool
-// boundary (session_id, tool_choice). Returning a fresh map per call
-// avoids accidental mutation by emitter code.
+// prompt plus the optional fields a caller may supply at the tool
+// boundary (session_id, tool_choice, streaming). Returning a fresh map
+// per call avoids accidental mutation by emitter code.
+//
+// `streaming` opts the call into the SSE backend. When true and the
+// client supplied a progressToken on the call, each ToolStreamChunk is
+// surfaced as an MCP `notifications/progress` message; the final
+// ToolResponse remains the tool result. Without a progressToken the
+// streaming flag is honoured but no chunk-level notifications fire — the
+// MCP spec only allows them when the client opted in.
 func inputSchema() map[string]any {
 	return map[string]any{
 		"type":                 "object",
@@ -170,6 +177,11 @@ func inputSchema() map[string]any {
 				"type":        "string",
 				"enum":        []any{"auto", "none", "required"},
 				"description": "Optional hint about whether the agent should call sub-tools (mirrors envelope.tool_choice).",
+			},
+			"streaming": map[string]any{
+				"type":        "boolean",
+				"default":     false,
+				"description": "When true, the call uses the SSE backend and each ToolStreamChunk is sent as an MCP notifications/progress message (requires the client to supply a progressToken on the request).",
 			},
 		},
 	}
