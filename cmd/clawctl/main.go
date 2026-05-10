@@ -46,6 +46,8 @@ func main() {
 		rawCmd(cfg, args[1:])
 	case "cli":
 		cliCmd(cfg, args[1:])
+	case "verify":
+		verifyCmd(cfg, args[1:])
 	case "_redact":
 		// Hidden parity-test surface (mirrors the bash dispatcher's
 		// `_redact)` branch). Not advertised in help.

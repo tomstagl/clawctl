@@ -341,3 +341,10 @@ hazard: macOS Tahoe go1.22.12 internal linker emits binaries missing
 LC_UUID — `go test` aborts in dyld; works fine with -ldflags="-linkmode=external".
 go test all packages clean (cmd/clawctl + 8 internal pkgs), go vet clean.
 ---
+
+## US-022: Implement Go `clawctl verify` parity
+Iteration: 2026-05-10T07:59:19Z
+Status: done
+Files changed: cmd/clawctl/main.go (dispatch verify), cmd/clawctl/verify.go (new), cmd/clawctl/verify_test.go (new), test/parity-verify.sh (new), prd.json (mark US-022 passing)
+Notes: Ported verify {commit,pr,issue,file,help} to Go matching the bash dispatcher byte-for-byte. Exit-code contract (0 verified, 1 unverified, 2 usage/ambiguous) preserved across all four kinds. `commit` shells out to `git cat-file -t` and checks for "commit"; mismatched types (e.g. tree, tag) read as unverified to match the bash exact-string compare. `pr`/`issue` shell out to `gh ... view --json state,url,title` and emit `verified: STATE — TITLE — URL` with the same em dash separator as the bash `jq -r` template. `file` mirrors bash semantics: `[ -e $path ]` → `os.Lstat` (matches bash's behaviour for symlinks: a dangling symlink reads as present in working tree), and `git cat-file -e ref:path` for the at-ref form. Added 18 unit tests in verify_test.go covering happy and sad paths for each kind, including missing-arg branches and the bad-spec edge case (`o/r` and `o/r#` both fail with the same usage message bash prints). Reused the cli_test.go PATH-shim strategy to fake `git` and `gh` end-to-end without pulling in a Go-side test dependency. test/parity-verify.sh runs both binaries against a fixture git repo with one committed file and a fake-gh shim on PATH; 54 paired (stdout+stderr+exit) assertions across 18 cases all match byte-for-byte. shellcheck clean, bash -n clean, go vet clean, go test ./... clean. Trip hazard: macOS Tahoe go1.22.12 internal linker emits binaries missing LC_UUID — set CGO_ENABLED=0 (or use -ldflags="-linkmode=external") for `go test` to avoid the dyld abort.
+---
