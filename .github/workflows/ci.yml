@@ -239,6 +239,8 @@ jobs:
           # Bumped from 1.22 → 1.24 to satisfy the MCP Go SDK pulled in for
           # `clawctl mcp` (US-025); the SDK's transitive deps require 1.24.
           go-version: "1.24"
+      - name: Install Linux keychain backends
+        run: sudo apt-get install -y libsecret-tools pass
       - name: go vet
         run: go vet ./...
       - name: go test (with coverage)

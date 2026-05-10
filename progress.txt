@@ -44,3 +44,9 @@ Status: done
 Files changed: .github/workflows/ci.yml, prd.json
 Notes: Added Go setup (actions/setup-go@v5) and binary build step to both envelope and contract jobs; renamed bash steps with (bash) suffix, added paired (go) steps passing BIN=$RUNNER_TEMP/clawctl-go; validate-fixtures.sh and install-resolver.sh remain single-pass (no binary dependency). actionlint, go vet, go test all pass.
 ---
+## US-008: Linux keychain backend coverage in CI
+Iteration: 2026-05-10T22:30:00Z
+Status: done
+Files changed: .github/workflows/ci.yml, prd.json
+Notes: Added 'sudo apt-get install -y libsecret-tools pass' step to the go CI job; Linux keychain tests already use stub scripts so no real D-Bus session is needed. Existing tests (TestPlatformTokenCmdLinux, TestPlatformTokenAllBackendsFail, TestPlatformTokenSecretTool, TestPlatformTokenPassFallback) all pass via PATH manipulation and stub binaries. TestTokenMissingItemReturnsErrNotFound has explicit t.Skip with reason, satisfying the no-silent-skips AC. go test ./... clean.
+---
