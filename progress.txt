@@ -130,3 +130,34 @@ skip getfqdn — common pattern for sandboxed CI. test/parity-health.sh runs
 Python mock; all pass. go vet, go test ./..., bash -n, shellcheck (clawctl
 + install.sh + new test) all clean.
 ---
+
+## US-014: Implement Go `clawctl models` with TTL cache
+Iteration: 2026-05-10T00:00:00Z
+Status: done
+Files changed: internal/cache/{cache,cache_test}.go (new), cmd/clawctl/{models,models_test}.go (new), cmd/clawctl/main.go (dispatch), test/parity-models.sh (new), prd.json
+Notes: New internal/cache package implements a TTL-bounded file cache
+keyed by mtime, mirroring the bash _models_cache contract: age <= TTL is
+fresh (strict greater-than for the bash test, identical here so the
+boundary cases match), refresh failures fall back to a stale cache when
+one exists, otherwise the underlying transport error propagates so
+ExitCode() can map it onto 6/7/22/28. Writes are atomic via a
+same-directory tempfile + rename so concurrent readers never observe a
+half-written body. cache.Now is overridable from tests; the unit suite
+freezes the clock to nail down the TTL boundary deterministically rather
+than relying on time.Sleep. cmd/clawctl/models.go reuses the prettyPrint
+helper from health.go and the same error-shape table (HTTP, DNS, refused,
+timeout, plus a new keychain.ErrNotFound branch that exits 2 with a
+remediation message pointing at `security add-generic-password`). A
+package-level keychainTokenSource hook keeps the production wiring on
+the Keychain while letting tests inject a stub token without touching
+macOS internals. test/parity-models.sh runs 14 assertions across 4 cases
+(cold fetch / warm cache / cache-file convention / no-host); the test
+needs a real Keychain entry because the bash binary refuses env/disk
+fallbacks (principle #2), so it adds a uniquely-named generic-password
+item per PID and removes it on cleanup. Go test fallout: this machine's
+Go 1.22 + macOS combo emits binaries without LC_UUID and dyld rejects
+them; tests pass with -ldflags='-linkmode=external'. CI runs on Linux so
+this is a local-only artifact, not something to paper over in code.
+shellcheck (severity=warning, ignoring test/) clean; go vet clean; full
+test suite green.
+---

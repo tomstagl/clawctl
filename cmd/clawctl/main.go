@@ -36,6 +36,8 @@ func main() {
 		os.Exit(0)
 	case "health":
 		healthCmd(cfg)
+	case "models":
+		modelsCmd(cfg)
 	default:
 		// Subcommands are not yet implemented in the typed binary; the bash
 		// entrypoint at ./clawctl is still authoritative. We deliberately exit
