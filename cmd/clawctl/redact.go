@@ -8,6 +8,7 @@ import (
 
 	"github.com/tomstagl/clawctl/internal/config"
 	"github.com/tomstagl/clawctl/internal/keychain"
+	"github.com/tomstagl/clawctl/internal/logging"
 	"github.com/tomstagl/clawctl/internal/redact"
 )
 
@@ -20,7 +21,12 @@ import (
 // This entry point exists for parity testing only and is intentionally
 // absent from `clawctl help`. Production subcommands (msg, stream)
 // will call internal/redact directly once US-018+ land.
-func runRedact(cfg config.Config, agent string, stdin io.Reader, stdout, stderr io.Writer) int {
+func runRedact(cfg config.Config, agent string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
+	log := logging.New(cfg.Log, stderr, "_redact", logging.TransportLocal)
+	defer func() { code = log.Finish(code) }()
+	stderr = log.Stderr()
+	log.SetAgent(agent)
+
 	in, err := io.ReadAll(stdin)
 	if err != nil {
 		fmt.Fprintf(stderr, "clawctl: read stdin: %v\n", err)
@@ -40,7 +46,9 @@ func runRedact(cfg config.Config, agent string, stdin io.Reader, stdout, stderr 
 	}
 
 	gw := readGwToken(cfg)
+	log.SetGwToken(gw)
 	r := redact.Apply(string(in), redact.Options{GwToken: gw})
+	log.AddRedactions(len(r.Hits))
 	_, _ = io.WriteString(stdout, r.Text)
 
 	if sinkPath != "" {

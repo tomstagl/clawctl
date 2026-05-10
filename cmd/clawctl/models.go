@@ -11,6 +11,7 @@ import (
 	"github.com/tomstagl/clawctl/internal/cache"
 	"github.com/tomstagl/clawctl/internal/config"
 	"github.com/tomstagl/clawctl/internal/keychain"
+	"github.com/tomstagl/clawctl/internal/logging"
 	"github.com/tomstagl/clawctl/internal/transport/api"
 )
 
@@ -21,7 +22,11 @@ import (
 // indentation. Refresh failures with a pre-existing cache fall back to the
 // stale body so a transient gateway outage doesn't break the slug-validation
 // dependency wired in around _validate_agent (US-018+).
-func runModels(ctx context.Context, cfg config.Config, stdout, stderr io.Writer) int {
+func runModels(ctx context.Context, cfg config.Config, stdout, stderr io.Writer) (code int) {
+	log := logging.New(cfg.Log, stderr, "models", logging.TransportAPI)
+	defer func() { code = log.Finish(code) }()
+	stderr = log.Stderr()
+
 	if cfg.Host == "" {
 		fmt.Fprintln(stderr, "clawctl: CLAWCTL_HOST not set. Export it (e.g. export CLAWCTL_HOST=http://your-openclaw-host:18789).")
 		return 2

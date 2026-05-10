@@ -379,3 +379,10 @@ worth flagging: Python's http.server in a test does an asynchronous TCP
 shutdown, so the cleanup trap waits on $SERVER_PID — copied that pattern
 verbatim from test/parity-health.sh to keep CI fast.
 ---
+
+## US-024: Implement structured JSON logs in Go binary
+Iteration: 2026-05-10T08:18:00Z
+Status: done
+Files changed: internal/logging/logging.go, internal/logging/logging_test.go, cmd/clawctl/{health,models,msg,stream,raw,cli,verify,trace,redact}.go, cmd/clawctl/health_test.go, prd.json
+Notes: New internal/logging package emits one JSON record on Finish in CLAWCTL_LOG=json mode; wired via named-return + defer in every run* so existing return paths stay untouched. Human mode pass-through is the unchanged default. Log-value redaction routes through internal/redact with the same gw_token wiring as response output.
+---

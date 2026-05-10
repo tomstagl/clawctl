@@ -14,6 +14,7 @@ import (
 	"github.com/tomstagl/clawctl/internal/config"
 	"github.com/tomstagl/clawctl/internal/envelope"
 	"github.com/tomstagl/clawctl/internal/keychain"
+	"github.com/tomstagl/clawctl/internal/logging"
 	"github.com/tomstagl/clawctl/internal/redact"
 	"github.com/tomstagl/clawctl/internal/trace"
 	"github.com/tomstagl/clawctl/internal/transport/api"
@@ -31,7 +32,11 @@ import (
 // ToolResponse.redactions[] so callers can branch on the slice without
 // parsing stderr. The stderr WARNING + audit-file append still fire so
 // human users keep the legacy signal (US-008 contract).
-func runMsg(ctx context.Context, cfg config.Config, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func runMsg(ctx context.Context, cfg config.Config, args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
+	log := logging.New(cfg.Log, stderr, "msg", logging.TransportAPI)
+	defer func() { code = log.Finish(code) }()
+	stderr = log.Stderr()
+
 	if cfg.Host == "" {
 		fmt.Fprintln(stderr, "clawctl: CLAWCTL_HOST not set. Export it (e.g. export CLAWCTL_HOST=http://your-openclaw-host:18789).")
 		return 2
@@ -47,6 +52,7 @@ func runMsg(ctx context.Context, cfg config.Config, args []string, stdin io.Read
 		return 2
 	}
 	agent := rest[0]
+	log.SetAgent("openclaw/" + agent)
 	var text string
 	if len(rest) > 1 {
 		text = strings.Join(rest[1:], " ")
@@ -64,6 +70,7 @@ func runMsg(ctx context.Context, cfg config.Config, args []string, stdin io.Read
 		fmt.Fprintf(stderr, "clawctl: %v\n", err)
 		return 1
 	}
+	log.SetTraceparent(tp.String())
 	fmt.Fprintf(stderr, "trace-id: %s\n", tp.TraceID)
 
 	tokenSource := keychainTokenSource(cfg)
@@ -94,7 +101,9 @@ func runMsg(ctx context.Context, cfg config.Config, args []string, stdin io.Read
 	}
 
 	gw := readGwToken(cfg)
+	log.SetGwToken(gw)
 	r := redact.Apply(parsed.Content, redact.Options{GwToken: gw, Disable: cfg.NoRedact})
+	log.AddRedactions(len(r.Hits))
 
 	kinds := r.Kinds()
 	if len(kinds) > 0 {

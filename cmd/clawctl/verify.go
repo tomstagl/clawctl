@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/tomstagl/clawctl/internal/config"
+	"github.com/tomstagl/clawctl/internal/logging"
 )
 
 // runVerify implements `clawctl verify <kind> <args>`. It mirrors the bash
@@ -24,7 +25,11 @@ import (
 //
 // Exit codes: 0 verified, 1 unverified, 2 usage/ambiguous (matches the
 // `Subcommand-specific exit codes` row in `clawctl help`).
-func runVerify(ctx context.Context, _ config.Config, args []string, stdout, stderr io.Writer) int {
+func runVerify(ctx context.Context, cfg config.Config, args []string, stdout, stderr io.Writer) (code int) {
+	log := logging.New(cfg.Log, stderr, "verify", logging.TransportLocal)
+	defer func() { code = log.Finish(code) }()
+	stderr = log.Stderr()
+
 	sub := ""
 	var rest []string
 	if len(args) > 0 {

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/tomstagl/clawctl/internal/config"
+	"github.com/tomstagl/clawctl/internal/logging"
 )
 
 // runTrace implements `clawctl trace <trace-id>`. It mirrors the bash
@@ -23,7 +24,11 @@ import (
 //
 //	0   header printed (regardless of Jaeger reachability/parse outcome)
 //	2   missing trace-id arg or CLAWCTL_JAEGER_UI unset
-func runTrace(ctx context.Context, cfg config.Config, args []string, stdout, stderr io.Writer) int {
+func runTrace(ctx context.Context, cfg config.Config, args []string, stdout, stderr io.Writer) (code int) {
+	log := logging.New(cfg.Log, stderr, "trace", logging.TransportAPI)
+	defer func() { code = log.Finish(code) }()
+	stderr = log.Stderr()
+
 	tid := ""
 	if len(args) > 0 {
 		tid = args[0]

@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -69,6 +70,82 @@ func TestRunHealth_HTTPError(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "HTTP 404") {
 		t.Errorf("stderr = %q, want HTTP 404 hint", stderr.String())
+	}
+}
+
+// TestRunHealth_JSONLog asserts US-024: with CLAWCTL_LOG=json, runHealth
+// emits exactly one structured JSON record on stderr in place of the
+// human-friendly lines. Field set covers the success path.
+func TestRunHealth_JSONLog(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	defer srv.Close()
+
+	var stdout, stderr bytes.Buffer
+	cfg := config.Config{Host: srv.URL, Timeout: 2 * time.Second, Log: "json"}
+	code := runHealth(context.Background(), cfg, &stdout, &stderr)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%s", code, stderr.String())
+	}
+
+	out := strings.TrimRight(stderr.String(), "\n")
+	if strings.Count(out, "\n") != 0 {
+		t.Fatalf("expected exactly one stderr line, got: %q", out)
+	}
+	var rec map[string]any
+	if err := json.Unmarshal([]byte(out), &rec); err != nil {
+		t.Fatalf("stderr is not JSON: %v\nline=%q", err, out)
+	}
+	for _, k := range []string{"ts", "subcommand", "transport", "latency_ms", "exit_code", "redactions_count"} {
+		if _, ok := rec[k]; !ok {
+			t.Errorf("required field %q missing: %v", k, rec)
+		}
+	}
+	if got, want := rec["subcommand"], "health"; got != want {
+		t.Errorf("subcommand = %v, want %v", got, want)
+	}
+	if got, want := rec["transport"], "api"; got != want {
+		t.Errorf("transport = %v, want %v", got, want)
+	}
+	if got, want := rec["exit_code"], float64(0); got != want {
+		t.Errorf("exit_code = %v, want %v", got, want)
+	}
+}
+
+// TestRunHealth_JSONLog_FailedCall covers the failed-call shape:
+// HTTP error → exit 22, no traceparent generated (health is anonymous),
+// gateway-error stderr line suppressed in favour of the JSON record.
+func TestRunHealth_JSONLog_FailedCall(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(503)
+		_, _ = w.Write([]byte(`{"error":"unavailable"}`))
+	}))
+	defer srv.Close()
+
+	var stdout, stderr bytes.Buffer
+	cfg := config.Config{Host: srv.URL, Timeout: 2 * time.Second, Log: "json"}
+	code := runHealth(context.Background(), cfg, &stdout, &stderr)
+	if code != 22 {
+		t.Fatalf("exit = %d, want 22", code)
+	}
+
+	out := strings.TrimRight(stderr.String(), "\n")
+	if strings.Contains(out, "HTTP 503") {
+		t.Errorf("human-friendly line leaked into stderr in JSON mode: %q", out)
+	}
+	if strings.Count(out, "\n") != 0 {
+		t.Fatalf("expected exactly one stderr line, got: %q", out)
+	}
+	var rec map[string]any
+	if err := json.Unmarshal([]byte(out), &rec); err != nil {
+		t.Fatalf("stderr is not JSON: %v\nline=%q", err, out)
+	}
+	if got, want := rec["exit_code"], float64(22); got != want {
+		t.Errorf("exit_code = %v, want %v", got, want)
+	}
+	if _, ok := rec["traceparent"]; ok {
+		t.Errorf("traceparent should be omitted (health is anonymous): %v", rec)
 	}
 }
 

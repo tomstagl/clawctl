@@ -13,6 +13,7 @@ import (
 
 	"github.com/tomstagl/clawctl/internal/config"
 	"github.com/tomstagl/clawctl/internal/envelope"
+	"github.com/tomstagl/clawctl/internal/logging"
 	"github.com/tomstagl/clawctl/internal/redact"
 	"github.com/tomstagl/clawctl/internal/sse"
 	"github.com/tomstagl/clawctl/internal/trace"
@@ -33,7 +34,11 @@ import (
 // per-chunk redactions sum to the aggregate result we emit one envelope
 // per chunk; when a secret pattern crosses a boundary we coalesce into
 // a single envelope carrying the boundary-safe redacted aggregate.
-func runStream(ctx context.Context, cfg config.Config, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func runStream(ctx context.Context, cfg config.Config, args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
+	log := logging.New(cfg.Log, stderr, "stream", logging.TransportAPI)
+	defer func() { code = log.Finish(code) }()
+	stderr = log.Stderr()
+
 	if cfg.Host == "" {
 		fmt.Fprintln(stderr, "clawctl: CLAWCTL_HOST not set. Export it (e.g. export CLAWCTL_HOST=http://your-openclaw-host:18789).")
 		return 2
@@ -49,6 +54,7 @@ func runStream(ctx context.Context, cfg config.Config, args []string, stdin io.R
 		return 2
 	}
 	agent := rest[0]
+	log.SetAgent("openclaw/" + agent)
 	var text string
 	if len(rest) > 1 {
 		text = strings.Join(rest[1:], " ")
@@ -66,6 +72,7 @@ func runStream(ctx context.Context, cfg config.Config, args []string, stdin io.R
 		fmt.Fprintf(stderr, "clawctl: %v\n", err)
 		return 1
 	}
+	log.SetTraceparent(tp.String())
 	fmt.Fprintf(stderr, "trace-id: %s\n", tp.TraceID)
 
 	tokenSource := keychainTokenSource(cfg)
@@ -100,12 +107,14 @@ func runStream(ctx context.Context, cfg config.Config, args []string, stdin io.R
 	}
 
 	gw := readGwToken(cfg)
+	log.SetGwToken(gw)
 
 	if flags.textOnly {
 		// Bash parity: buffer the full content, redact once (boundary-safe),
 		// emit with a trailing newline.
 		agg := strings.Join(parsed.Chunks, "")
 		r := redact.Apply(agg, redact.Options{GwToken: gw, Disable: cfg.NoRedact})
+		log.AddRedactions(len(r.Hits))
 		emitRedactionStderr(cfg, agent, r.Kinds(), stderr)
 		_, _ = io.WriteString(stdout, r.Text)
 		_, _ = io.WriteString(stdout, "\n")
@@ -122,6 +131,7 @@ func runStream(ctx context.Context, cfg config.Config, args []string, stdin io.R
 	}
 	agg := strings.Join(parsed.Chunks, "")
 	aggResult := redact.Apply(agg, redact.Options{GwToken: gw, Disable: cfg.NoRedact})
+	log.AddRedactions(len(aggResult.Hits))
 
 	// Canonical pass: stderr WARNING + audit-file fire from the aggregate
 	// hit set, not the per-chunk passes. This matches the bash entrypoint —

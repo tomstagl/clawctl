@@ -11,6 +11,7 @@ import (
 
 	"github.com/tomstagl/clawctl/internal/config"
 	"github.com/tomstagl/clawctl/internal/keychain"
+	"github.com/tomstagl/clawctl/internal/logging"
 	"github.com/tomstagl/clawctl/internal/trace"
 	"github.com/tomstagl/clawctl/internal/transport/api"
 )
@@ -27,7 +28,11 @@ import (
 // reimplements every curl flag is the wrong abstraction. Common parity cases
 // (GET, POST with a body, error responses) are covered with these two flags;
 // users with niche curl needs should fall back to the bash entrypoint.
-func runRaw(ctx context.Context, cfg config.Config, args []string, stdout, stderr io.Writer) int {
+func runRaw(ctx context.Context, cfg config.Config, args []string, stdout, stderr io.Writer) (code int) {
+	log := logging.New(cfg.Log, stderr, "raw", logging.TransportAPI)
+	defer func() { code = log.Finish(code) }()
+	stderr = log.Stderr()
+
 	if cfg.Host == "" {
 		fmt.Fprintln(stderr, "clawctl: CLAWCTL_HOST not set. Export it (e.g. export CLAWCTL_HOST=http://your-openclaw-host:18789).")
 		return 2
@@ -80,6 +85,7 @@ func runRaw(ctx context.Context, cfg config.Config, args []string, stdout, stder
 		fmt.Fprintf(stderr, "clawctl: %v\n", err)
 		return 1
 	}
+	log.SetTraceparent(tp.String())
 	fmt.Fprintf(stderr, "trace-id: %s\n", tp.TraceID)
 
 	tokenSource := keychainTokenSource(cfg)

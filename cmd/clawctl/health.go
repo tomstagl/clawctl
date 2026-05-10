@@ -10,6 +10,7 @@ import (
 	"os"
 
 	"github.com/tomstagl/clawctl/internal/config"
+	"github.com/tomstagl/clawctl/internal/logging"
 	"github.com/tomstagl/clawctl/internal/transport/api"
 )
 
@@ -18,7 +19,11 @@ import (
 // ${CLAWCTL_HOST}/health | jq .) and surfaces the same documented exit
 // codes (0/2/6/7/22/28). The /health endpoint is anonymous on the gateway
 // so no Keychain access is needed — Token is left nil.
-func runHealth(ctx context.Context, cfg config.Config, stdout, stderr io.Writer) int {
+func runHealth(ctx context.Context, cfg config.Config, stdout, stderr io.Writer) (code int) {
+	log := logging.New(cfg.Log, stderr, "health", logging.TransportAPI)
+	defer func() { code = log.Finish(code) }()
+	stderr = log.Stderr()
+
 	if cfg.Host == "" {
 		fmt.Fprintln(stderr, "clawctl: CLAWCTL_HOST not set. Export it (e.g. export CLAWCTL_HOST=http://your-openclaw-host:18789).")
 		return 2

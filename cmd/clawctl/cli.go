@@ -9,6 +9,7 @@ import (
 	"os/exec"
 
 	"github.com/tomstagl/clawctl/internal/config"
+	"github.com/tomstagl/clawctl/internal/logging"
 )
 
 // ocRemotePath is the absolute path to oc-remote on the gateway host. The
@@ -59,7 +60,11 @@ clawctl cli)" section in README.md for the full procedure):
 // subsequent SSH-using subcommands reuse the connection. argv is passed as
 // exec.Command varargs — never concatenated into a shell string — so the
 // host shell never sees argv as text.
-func runCLI(ctx context.Context, cfg config.Config, args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+func runCLI(ctx context.Context, cfg config.Config, args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
+	log := logging.New(cfg.Log, stderr, "cli", logging.TransportSSH)
+	defer func() { code = log.Finish(code) }()
+	stderr = log.Stderr()
+
 	if cfg.SSHHost == "" {
 		fmt.Fprintln(stderr, "clawctl: CLAWCTL_SSH_HOST not set. Export it (e.g. export CLAWCTL_SSH_HOST=user@host).")
 		return 2
