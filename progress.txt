@@ -14,3 +14,15 @@ Status: done
 Files changed: .github/workflows/ci.yml, prd.json
 Notes: Each script runs as a separate step with continue-on-error:true; a final summary step fails the job if any script failed, so failures surface independently without skipping siblings. macOS-gated scripts (parity-models, parity-raw, parity-redact) exit 0 via their built-in skip guard on ubuntu-latest.
 ---
+## US-003: Wire envelope contract scripts into CI
+Iteration: 2026-05-10T20:00:00Z
+Status: done
+Files changed: .github/workflows/ci.yml, prd.json
+Notes: Added 'envelope' job with npm cache (actions/cache@v4 on ~/.npm) to amortize ajv-cli@5 cold installs; each of the four scripts runs as an independent step with continue-on-error:true; a summary step fails the job if any script failed.
+---
+## US-004: Wire exit-codes, cli-hardening, install-resolver scripts into CI
+Iteration: 2026-05-10T20:30:00Z
+Status: done
+Files changed: .github/workflows/ci.yml, prd.json
+Notes: Added 'contract' job mirroring the parity/envelope pattern — each of the three scripts runs with continue-on-error:true, a final summary step fails if any script failed. All three scripts pass locally (37 + 12 + 19 checks). actionlint clean.
+---

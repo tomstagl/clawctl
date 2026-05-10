@@ -164,6 +164,31 @@ jobs:
           [ "${{ steps.redacted.outcome }}" = "failure" ] && failed=1
           exit $failed
 
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: exit-codes.sh
+        id: exitcodes
+        continue-on-error: true
+        run: bash test/exit-codes.sh
+      - name: cli-hardening.sh
+        id: hardening
+        continue-on-error: true
+        run: bash test/cli-hardening.sh
+      - name: install-resolver.sh
+        id: resolver
+        continue-on-error: true
+        run: bash test/install-resolver.sh
+      - name: Fail if any contract script failed
+        if: always()
+        run: |
+          failed=0
+          [ "${{ steps.exitcodes.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.hardening.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.resolver.outcome }}" = "failure" ] && failed=1
+          exit $failed
+
   go:
     runs-on: ubuntu-latest
     env:
