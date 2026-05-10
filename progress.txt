@@ -8,3 +8,9 @@ Status: done
 Files changed: .github/workflows/ci.yml, prd.json
 Notes: Added actionlint job to ci.yml using raven-actions/actionlint@v2 linting all .github/workflows/*.yml; existing job in release.yml left in place for release-path coverage.
 ---
+## US-002: Wire mock-gateway parity scripts into CI
+Iteration: 2026-05-10T17:06:38Z
+Status: done
+Files changed: .github/workflows/ci.yml, prd.json
+Notes: Each script runs as a separate step with continue-on-error:true; a final summary step fails the job if any script failed, so failures surface independently without skipping siblings. macOS-gated scripts (parity-models, parity-raw, parity-redact) exit 0 via their built-in skip guard on ubuntu-latest.
+---

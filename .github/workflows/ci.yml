@@ -80,6 +80,53 @@ jobs:
           echo "$out" | grep -q clawctl
           "$CLAWCTL_INSTALL_DIR/clawctl" --help
 
+  parity:
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Install python3 and jq
+        run: sudo apt-get install -y python3 jq
+      - name: parity-health.sh
+        id: health
+        continue-on-error: true
+        run: bash test/parity-health.sh
+      - name: parity-models.sh
+        id: models
+        continue-on-error: true
+        run: bash test/parity-models.sh
+      - name: parity-raw.sh
+        id: raw
+        continue-on-error: true
+        run: bash test/parity-raw.sh
+      - name: parity-verify.sh
+        id: verify
+        continue-on-error: true
+        run: bash test/parity-verify.sh
+      - name: parity-redact.sh
+        id: redact
+        continue-on-error: true
+        run: bash test/parity-redact.sh
+      - name: parity-trace.sh
+        id: trace
+        continue-on-error: true
+        run: bash test/parity-trace.sh
+      - name: Fail if any parity script failed
+        if: always()
+        run: |
+          failed=0
+          [ "${{ steps.health.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.models.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.raw.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.verify.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.redact.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.trace.outcome }}" = "failure" ] && failed=1
+          exit $failed
+
   go:
     runs-on: ubuntu-latest
     env:
