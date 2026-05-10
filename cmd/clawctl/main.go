@@ -69,6 +69,8 @@ func main() {
 		verifyCmd(cfg, args[1:])
 	case "trace":
 		traceCmd(cfg, args[1:])
+	case "init":
+		initCmd(cfg, args[1:])
 	case "mcp":
 		mcpCmd(cfg, args[1:])
 	case "_redact":
@@ -91,6 +93,7 @@ func printHelp(w io.Writer, cfg config.Config) {
 	}
 	fmt.Fprintf(w, `clawctl — openclaw client (host: %s)
 
+  clawctl init [--check]                      print setup snippets; --check verifies environment
   clawctl health                              gateway liveness
   clawctl models                              list registered agents (60s cache)
   clawctl msg [-s SESSION] [--text] AGENT [TEXT]
