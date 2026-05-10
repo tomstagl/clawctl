@@ -8,11 +8,20 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/tomstagl/clawctl/internal/config"
 	"github.com/tomstagl/clawctl/internal/logging"
 	"github.com/tomstagl/clawctl/internal/transport/api"
 )
+
+// newHealthAPIClient is the factory that runHealth uses to build its transport
+// client. It is a package-level variable so tests can inject a stub client
+// (e.g. with Retries=0 and a custom HTTP.Transport) without modifying
+// production code paths.
+var newHealthAPIClient = func(host string, timeout time.Duration) *api.Client {
+	return api.New(host, timeout, nil)
+}
 
 // runHealth implements `clawctl health`. It mirrors the bash subcommand
 // (curl --silent --show-error --fail-with-body --max-time TIMEOUT --retry 2
@@ -29,7 +38,7 @@ func runHealth(ctx context.Context, cfg config.Config, stdout, stderr io.Writer)
 		return 2
 	}
 
-	client := api.New(cfg.Host, cfg.Timeout, nil)
+	client := newHealthAPIClient(cfg.Host, cfg.Timeout)
 	body, err := client.Get(ctx, "/health", false)
 	if err != nil {
 		return reportHealthError(cfg, err, stdout, stderr)

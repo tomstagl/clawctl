@@ -117,6 +117,8 @@ Exit codes (transport):
   22  HTTP 4xx/5xx (body printed; reason on stderr)
   28  timeout
 
+Exit codes: see docs/cli-contract.md
+
 Subcommand-specific exit codes (rationale):
   verify    1 = unverified (commit/PR/issue/file not found); see 'clawctl verify help'
   cli       pass-through: ssh and oc-remote/openclaw exit codes reach the caller unchanged

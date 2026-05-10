@@ -167,7 +167,7 @@ clawctl models | jq -r '.data[].id'
 | `clawctl verify KIND ARGS`                  | Claim verification — `commit`, `pr`, `issue`, `file` |
 | `clawctl trace TRACE-ID`                    | Print Jaeger UI link + first 30 spans for a trace    |
 
-Exit codes: `0` ok, `2` usage, `6` DNS, `7` connection refused, `22` HTTP 4xx/5xx, `28` timeout.
+Exit codes: see [`docs/cli-contract.md`](docs/cli-contract.md).
 
 ## Recipes
 
