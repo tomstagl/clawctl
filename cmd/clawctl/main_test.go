@@ -50,3 +50,24 @@ func TestPrintHelpHostUnset(t *testing.T) {
 		t.Errorf("help text missing <unset> marker when Host empty")
 	}
 }
+
+// TestPrintVersionEmbedsLDFlags pins the format `clawctl <version> (<commit>)`
+// because the install script (US-030) and release workflow (US-029) both
+// pattern-match on it: the install script uses it to refuse to overwrite a
+// non-clawctl binary, and the workflow's ldflags stamp the values it consumes.
+func TestPrintVersionEmbedsLDFlags(t *testing.T) {
+	prevVersion, prevCommit := version, commit
+	t.Cleanup(func() { version, commit = prevVersion, prevCommit })
+
+	version = "v1.2.3"
+	commit = "abcdef0"
+
+	var buf bytes.Buffer
+	printVersion(&buf)
+	got := buf.String()
+
+	want := "clawctl v1.2.3 (abcdef0)\n"
+	if got != want {
+		t.Errorf("printVersion = %q, want %q", got, want)
+	}
+}

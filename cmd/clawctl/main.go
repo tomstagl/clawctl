@@ -11,12 +11,20 @@ import (
 	"github.com/tomstagl/clawctl/internal/config"
 )
 
-// Set at build time via -ldflags '-X main.version=...'. Stay nominal until
-// the release workflow lands (US-029).
+// Set at build time via -ldflags '-X main.version=$TAG -X main.commit=$SHA'.
+// Defaults are nominal so `go run`/local builds still print something useful;
+// the release workflow at .github/workflows/release.yml stamps the real tag
+// and commit (US-029).
 var (
 	version = "dev"
 	commit  = "unknown"
 )
+
+// printVersion emits the build-stamped version line. Extracted from the
+// dispatcher so tests can assert on the format without invoking os.Exit.
+func printVersion(w io.Writer) {
+	fmt.Fprintf(w, "clawctl %s (%s)\n", version, commit)
+}
 
 func main() {
 	cfg := config.Load()
@@ -32,7 +40,7 @@ func main() {
 		printHelp(os.Stdout, cfg)
 		os.Exit(0)
 	case "version", "--version":
-		fmt.Printf("clawctl %s (%s)\n", version, commit)
+		printVersion(os.Stdout)
 		os.Exit(0)
 	case "health":
 		healthCmd(cfg)
