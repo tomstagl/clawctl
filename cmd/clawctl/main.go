@@ -40,6 +40,10 @@ func main() {
 		modelsCmd(cfg)
 	case "raw":
 		rawCmd(cfg, args[1:])
+	case "_redact":
+		// Hidden parity-test surface (mirrors the bash dispatcher's
+		// `_redact)` branch). Not advertised in help.
+		redactCmd(cfg, args[1:])
 	default:
 		// Subcommands are not yet implemented in the typed binary; the bash
 		// entrypoint at ./clawctl is still authoritative. We deliberately exit

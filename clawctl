@@ -790,6 +790,17 @@ Subcommand-specific exit codes (rationale):
 EOF
     ;;
 
+  _redact)
+    # Hidden helper for parity testing only (intentionally absent from
+    # `clawctl help`). Reads stdin, writes redacted text to stdout. The
+    # optional positional arg is the agent tag carried into the stderr
+    # WARNING line and the audit-file entry. CLAWCTL_REDACT_SINK,
+    # CLAWCTL_NO_REDACT, and CLAWCTL_CACHE_DIR behave identically to
+    # their use inside the production subcommands. Used by
+    # test/parity-redact.sh to diff bash _redact vs the Go port.
+    _redact "${1:-?}"
+    ;;
+
   *)
     echo "clawctl: unknown command '$cmd' (try 'clawctl help')" >&2
     exit 2

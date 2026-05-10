@@ -213,3 +213,37 @@ hazard: if a future change makes Next() loop without consuming bytes,
 the fuzz target's 16384-event cap will fail-fast rather than hang the
 run. go vet, go test ./..., bash -n, shellcheck all clean.
 ---
+
+## US-017: Port redaction layer to Go with parity test
+Iteration: 2026-05-10T09:30:00Z
+Status: done
+Files changed: internal/redact/redact.go (new), internal/redact/redact_test.go (new), cmd/clawctl/redact.go (new), cmd/clawctl/main.go, clawctl, test/parity-redact.sh (new), .gitignore, prd.json
+Notes: Ported all six pattern-based redactions (aws_akid, brave,
+dt0c01, dt0s16, gh_token, jwt) plus the literal gateway-token
+substitution (>= 16-byte bound) into a pure Go internal/redact
+package. Replacement format byte-matches bash: `<REDACTED:<kind>:`
++ first 11 bytes of match + U+2026 + `>` (or 6-byte head for
+gw_token). Hits are recorded against the *pre-redaction* input
+offsets so order is stable and emitters can route them to
+envelope.redactions[] (US-008 contract). MarshalSink reproduces
+bash's `[{"kind":"X","offset_hint":N,"count":1},...]` shape sorted
+by (offset, kind); AppendAudit writes the `<ISO-UTC> agent=X
+kinds=a,b,c` line; WarnLine reproduces the stderr WARNING. Exposed
+behind hidden `_redact` subcommands on both bash and Go binaries
+(intentionally not in `clawctl help`) so test/parity-redact.sh can
+diff stdout / sink JSON / exit / audit-suffix across 20 fixtures
+covering empty, no-secret, every kind, mixed, dups, JSON-embed,
+multiline, UTF-8 brackets, gw-token x2, NO_REDACT bypass, and an
+all-kinds aggregate. All 80 assertions pass byte-identical.
+Trip-hazard discovered: bash's `while $text =~ s/jwt-re/repl/`
+substitution loop can infinite-loop if the replacement contains a
+JWT-shaped substring (happens when the JWT header is < 8 chars, so
+the first-11-byte head of the match contains both dots). Documented
+in the parity-test header and worked around in the fixtures by
+using >= 8-char headers; the Go single-pass ReplaceAllStringFunc is
+immune. Build dodge: parity test builds into a gitignored .test-bin/
+inside the repo because /tmp-rooted Mach-O binaries fail with
+`missing LC_UUID load command` on this host (parity-models.sh has
+the same TODO; deferred). go vet, go test ./..., shellcheck, bash -n
+all clean (CGO_ENABLED=0 — same as CI).
+---
