@@ -127,6 +127,43 @@ jobs:
           [ "${{ steps.trace.outcome }}" = "failure" ] && failed=1
           exit $failed
 
+  envelope:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache npm (ajv-cli)
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ajv-cli-v5-${{ runner.os }}
+      - name: Install deps (python3, jq, curl)
+        run: sudo apt-get install -y python3 jq curl
+      - name: validate-fixtures.sh
+        id: fixtures
+        continue-on-error: true
+        run: bash test/validate-fixtures.sh
+      - name: envelope-msg.sh
+        id: msg
+        continue-on-error: true
+        run: bash test/envelope-msg.sh
+      - name: envelope-stream.sh
+        id: stream
+        continue-on-error: true
+        run: bash test/envelope-stream.sh
+      - name: envelope-redacted.sh
+        id: redacted
+        continue-on-error: true
+        run: bash test/envelope-redacted.sh
+      - name: Fail if any envelope script failed
+        if: always()
+        run: |
+          failed=0
+          [ "${{ steps.fixtures.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.msg.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.stream.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.redacted.outcome }}" = "failure" ] && failed=1
+          exit $failed
+
   go:
     runs-on: ubuntu-latest
     env:
