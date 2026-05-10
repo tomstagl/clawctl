@@ -38,6 +38,8 @@ func main() {
 		healthCmd(cfg)
 	case "models":
 		modelsCmd(cfg)
+	case "raw":
+		rawCmd(cfg, args[1:])
 	default:
 		// Subcommands are not yet implemented in the typed binary; the bash
 		// entrypoint at ./clawctl is still authoritative. We deliberately exit

@@ -13,6 +13,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -128,6 +129,34 @@ func ExitCode(err error) int {
 	return 1
 }
 
+// Request describes an outbound HTTP call. Used by Do for arbitrary methods
+// and bodies (e.g. `clawctl raw POST …`); Get is the GET-only convenience
+// wrapper that subcommands such as health and models still call.
+type Request struct {
+	// Method is the HTTP verb (GET, POST, …). Required.
+	Method string
+	// Path is appended to the client's Host; e.g. "/v1/models".
+	Path string
+	// Body is the request body. May be nil.
+	Body []byte
+	// Authed toggles the Authorization: Bearer <token> header. When true the
+	// Client must have a non-nil TokenSource.
+	Authed bool
+	// Traceparent, if non-empty, is sent as the W3C `traceparent` header so
+	// the gateway can correlate spans. The bash `clawctl raw` always sets
+	// this; the typed binary should too.
+	Traceparent string
+	// Headers carries raw "Key: Value" strings the caller wants to add on
+	// top of the defaults (Accept, Authorization, traceparent). Matches the
+	// bash entrypoint's `-H` passthrough.
+	Headers []string
+	// Retry, when true, applies the standard retry policy (transport errors
+	// and 5xx responses, up to c.Retries times). When false the call is
+	// one-shot — bash `clawctl raw` only retries GETs, so callers gate this
+	// on the verb.
+	Retry bool
+}
+
 // Get issues an authenticated GET on path (e.g. "/v1/models") and returns
 // the response body. When authed is false the Authorization header is
 // omitted — used for /health, which the gateway exposes anonymously to
@@ -137,13 +166,28 @@ func ExitCode(err error) int {
 // >= 500, mirroring curl's --retry-all-errors behavior. 4xx responses are
 // returned without retry because they're caller-fault and won't recover.
 func (c *Client) Get(ctx context.Context, path string, authed bool) ([]byte, error) {
+	return c.Do(ctx, Request{
+		Method: http.MethodGet,
+		Path:   path,
+		Authed: authed,
+		Retry:  true,
+	})
+}
+
+// Do executes req and returns the response body. Errors are typed to match
+// the documented exit-code contract (DNSError → 6, ConnRefusedError → 7,
+// HTTPError → 22, TimeoutError → 28).
+func (c *Client) Do(ctx context.Context, req Request) ([]byte, error) {
 	if c.Host == "" {
 		return nil, errors.New("api: host is empty")
 	}
-	endpoint := c.Host + path
+	if req.Method == "" {
+		req.Method = http.MethodGet
+	}
+	endpoint := c.Host + req.Path
 
 	var token string
-	if authed {
+	if req.Authed {
 		if c.Token == nil {
 			return nil, errors.New("api: authenticated request requires a TokenSource")
 		}
@@ -154,15 +198,18 @@ func (c *Client) Get(ctx context.Context, path string, authed bool) ([]byte, err
 		token = t
 	}
 
+	attempts := 1
+	if req.Retry {
+		attempts = c.Retries + 1
+	}
 	var lastErr error
-	attempts := c.Retries + 1
 	for attempt := 0; attempt < attempts; attempt++ {
-		body, err := c.doGet(ctx, endpoint, token)
+		body, err := c.doRequest(ctx, endpoint, token, req)
 		if err == nil {
 			return body, nil
 		}
 		lastErr = err
-		if !shouldRetry(err) || attempt == attempts-1 {
+		if !req.Retry || !shouldRetry(err) || attempt == attempts-1 {
 			return nil, err
 		}
 		select {
@@ -174,17 +221,31 @@ func (c *Client) Get(ctx context.Context, path string, authed bool) ([]byte, err
 	return nil, lastErr
 }
 
-func (c *Client) doGet(ctx context.Context, endpoint, token string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+func (c *Client) doRequest(ctx context.Context, endpoint, token string, req Request) ([]byte, error) {
+	var bodyReader io.Reader
+	if len(req.Body) > 0 {
+		bodyReader = bytes.NewReader(req.Body)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, req.Method, endpoint, bodyReader)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
 	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+		httpReq.Header.Set("Authorization", "Bearer "+token)
+	}
+	if req.Traceparent != "" {
+		httpReq.Header.Set("traceparent", req.Traceparent)
+	}
+	for _, h := range req.Headers {
+		k, v, ok := splitHeader(h)
+		if !ok {
+			return nil, fmt.Errorf("api: malformed header %q (want 'Key: Value')", h)
+		}
+		httpReq.Header.Set(k, v)
 	}
 
-	resp, err := c.HTTP.Do(req)
+	resp, err := c.HTTP.Do(httpReq)
 	if err != nil {
 		return nil, classifyTransportErr(err, endpoint, c.Timeout)
 	}
@@ -198,6 +259,21 @@ func (c *Client) doGet(ctx context.Context, endpoint, token string) ([]byte, err
 		return nil, &HTTPError{StatusCode: resp.StatusCode, Body: body}
 	}
 	return body, nil
+}
+
+// splitHeader parses a `Key: Value` curl-style header string. Trailing/leading
+// whitespace around the value is trimmed; the key is returned verbatim.
+func splitHeader(s string) (string, string, bool) {
+	idx := strings.Index(s, ":")
+	if idx <= 0 {
+		return "", "", false
+	}
+	key := strings.TrimSpace(s[:idx])
+	val := strings.TrimSpace(s[idx+1:])
+	if key == "" {
+		return "", "", false
+	}
+	return key, val, true
 }
 
 func shouldRetry(err error) bool {

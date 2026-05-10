@@ -597,9 +597,11 @@ PY
     if [ "$method" = "GET" ]; then
       retry_args=(--retry 2 --retry-connrefused --retry-delay 1 --retry-all-errors)
     fi
+    # Bash 3.2 (macOS) errors on `"${arr[@]}"` when arr is empty under set -u;
+    # the ${arr[@]+...} guard expands to nothing if unset/empty.
     curl --silent --show-error --fail-with-body \
       --max-time "$CLAWCTL_TIMEOUT" \
-      "${retry_args[@]}" \
+      ${retry_args[@]+"${retry_args[@]}"} \
       -X "$method" "${CLAWCTL_HOST}${path}" \
       -H "Authorization: Bearer $(_token)" \
       -H "Accept: application/json" \

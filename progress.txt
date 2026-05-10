@@ -161,3 +161,26 @@ this is a local-only artifact, not something to paper over in code.
 shellcheck (severity=warning, ignoring test/) clean; go vet clean; full
 test suite green.
 ---
+
+## US-015: Implement Go `clawctl raw` with traceparent
+Iteration: 2026-05-10T00:00:00Z
+Status: done
+Files changed: internal/trace/trace.go, internal/trace/trace_test.go, internal/transport/api/client.go (Do + Request), cmd/clawctl/raw.go, cmd/clawctl/raw_test.go, cmd/clawctl/main.go (dispatch), test/parity-raw.sh, clawctl (bash retry_args set -u fix), prd.json
+Notes: The Go raw uses the new internal/trace package (crypto/rand →
+00-<32hex>-<16hex>-01) and a new api.Client.Do that accepts arbitrary
+method/body/headers/traceparent and gates retries on the caller (only
+GET retries, matching bash). Get is now a thin Do wrapper; existing
+client tests still pass. cmd/clawctl/raw.go parses a deliberately
+narrow flag surface (-d/--data and -H/--header only) and refuses
+anything else with exit 2 — the bash version forwards arbitrary curl
+flags via "$@", which would be the wrong abstraction in a typed binary.
+HTTP errors forward the raw body to stdout (no pretty-printing — curl
+--fail-with-body doesn't pretty-print either) and exit 22. Surfaced and
+fixed an unrelated bash bug along the way: `"${retry_args[@]}"`
+expansion under `set -u` errors on macOS bash 3.2 when the array is
+empty (POST path); guarded with the `${arr[@]+...}` idiom. parity-raw.sh
+runs 23 assertions across 4 cases (GET parity + W3C traceparent shape
++ trace-id stderr line; POST -d body forwarded; HTTP 500 → exit 22 +
+body forwarded; CLAWCTL_HOST unset → exit 2). go vet, go test, and the
+existing parity-health/parity-models suites all clean.
+---
