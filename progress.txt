@@ -26,3 +26,9 @@ Status: done
 Files changed: .github/workflows/ci.yml, prd.json
 Notes: Added 'contract' job mirroring the parity/envelope pattern — each of the three scripts runs with continue-on-error:true, a final summary step fails if any script failed. All three scripts pass locally (37 + 12 + 19 checks). actionlint clean.
 ---
+## US-005: Add Go coverage measurement and 65% floor for internal/
+Iteration: 2026-05-10T21:00:00Z
+Status: done
+Files changed: .github/workflows/ci.yml, prd.json
+Notes: Replaced 'go test ./...' with coverprofile run; added func-output print step and a floor check using 'go test -cover ./internal/...' piped to awk (function-average on func output gave inaccurate per-package statement coverage for transport/api). All 10 internal packages pass today's 65% floor. actionlint clean.
+---

@@ -202,7 +202,26 @@ jobs:
           go-version: "1.24"
       - name: go vet
         run: go vet ./...
-      - name: go test
-        run: go test ./...
+      - name: go test (with coverage)
+        run: go test -coverprofile=coverage.out -covermode=atomic ./...
+      - name: coverage report
+        run: go tool cover -func=coverage.out
+      - name: coverage floor (internal/ ≥ 65%)
+        run: |
+          go test -cover ./internal/... | awk '
+            /^ok/ {
+              pct = $5; gsub(/%/, "", pct)
+              if (pct+0 < 65.0) {
+                printf "FAIL: %s %.1f%% < 65.0%%\n", $2, pct+0
+                fail = 1
+              }
+            }
+            END { exit fail+0 }
+          '
+      - name: upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage.out
       - name: fuzz SSE parser
         run: go test -run=^$ -fuzz=FuzzParseSSE -fuzztime=5s ./internal/sse/
