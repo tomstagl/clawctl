@@ -21,11 +21,21 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="$ROOT/clawctl.bash"
+BIN="${BIN:-$ROOT/clawctl.bash}"
 SCHEMA="$ROOT/schemas/envelope.v1.json"
 
 if [[ ! -x "$BIN" ]]; then
   echo "FAIL: $BIN not executable" >&2; exit 1
+fi
+
+# bash wrapper: --envelope activates envelope output; no flag = text-only.
+# Go binary:   envelope is the default; --text activates text-only output.
+if [[ "$BIN" == *.bash ]]; then
+  ENVELOPE_FLAG="--envelope"
+  TEXT_FLAG=""
+else
+  ENVELOPE_FLAG=""
+  TEXT_FLAG="--text"
 fi
 if [[ ! -f "$SCHEMA" ]]; then
   echo "FAIL: schema not found at $SCHEMA" >&2; exit 2
@@ -140,7 +150,7 @@ echo "→ Test 1: clawctl msg --envelope emits a valid ToolResponse"
 out_file="$TMP/envelope.json"
 err_file="$TMP/envelope.err"
 set +e
-run_clawctl msg --envelope default "hello" >"$out_file" 2>"$err_file"
+run_clawctl msg ${ENVELOPE_FLAG:+"$ENVELOPE_FLAG"} default "hello" >"$out_file" 2>"$err_file"
 ec=$?
 set -e
 
@@ -196,7 +206,7 @@ fi
 echo "→ Test 2: plain clawctl msg preserves text-only output"
 plain_file="$TMP/plain.txt"
 set +e
-run_clawctl msg default "hello" >"$plain_file" 2>/dev/null
+run_clawctl msg ${TEXT_FLAG:+"$TEXT_FLAG"} default "hello" >"$plain_file" 2>/dev/null
 ec=$?
 set -e
 

@@ -19,11 +19,21 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="$ROOT/clawctl.bash"
+BIN="${BIN:-$ROOT/clawctl.bash}"
 SCHEMA="$ROOT/schemas/envelope.v1.json"
 
 if [[ ! -x "$BIN" ]]; then
   echo "FAIL: $BIN not executable" >&2; exit 1
+fi
+
+# bash wrapper: --envelope activates envelope output; no flag = text-only.
+# Go binary:   envelope is the default; --text activates text-only output.
+if [[ "$BIN" == *.bash ]]; then
+  ENVELOPE_FLAG="--envelope"
+  TEXT_FLAG=""
+else
+  ENVELOPE_FLAG=""
+  TEXT_FLAG="--text"
 fi
 if [[ ! -f "$SCHEMA" ]]; then
   echo "FAIL: schema not found at $SCHEMA" >&2; exit 2
@@ -163,7 +173,7 @@ out_file="$TMP/msg.json"
 err_file="$TMP/msg.err"
 rm -f "$CACHE/last-redaction"
 set +e
-run_clawctl msg --envelope default "echo my secrets" >"$out_file" 2>"$err_file"
+run_clawctl msg ${ENVELOPE_FLAG:+"$ENVELOPE_FLAG"} default "echo my secrets" >"$out_file" 2>"$err_file"
 ec=$?
 set -e
 
@@ -248,7 +258,7 @@ nd_file="$TMP/stream.ndjson"
 err_file="$TMP/stream.err"
 rm -f "$CACHE/last-redaction"
 set +e
-run_clawctl stream --envelope default "echo my secrets" >"$nd_file" 2>"$err_file"
+run_clawctl stream ${ENVELOPE_FLAG:+"$ENVELOPE_FLAG"} default "echo my secrets" >"$nd_file" 2>"$err_file"
 ec=$?
 set -e
 
@@ -324,7 +334,7 @@ echo "→ Test 3: plain clawctl msg redacts text output (no envelope)"
 plain_file="$TMP/plain.txt"
 plain_err="$TMP/plain.err"
 set +e
-run_clawctl msg default "echo my secrets" >"$plain_file" 2>"$plain_err"
+run_clawctl msg ${TEXT_FLAG:+"$TEXT_FLAG"} default "echo my secrets" >"$plain_file" 2>"$plain_err"
 ec=$?
 set -e
 

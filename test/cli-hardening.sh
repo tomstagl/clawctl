@@ -20,7 +20,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="$ROOT/clawctl.bash"
+BIN="${BIN:-$ROOT/clawctl.bash}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 

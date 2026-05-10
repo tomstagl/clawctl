@@ -22,7 +22,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="$ROOT/clawctl.bash"
+BIN="${BIN:-$ROOT/clawctl.bash}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
@@ -136,13 +136,17 @@ expect_exit 2 "trace (no CLAWCTL_JAEGER_UI)" \
 #    stale so _models_cache actually invokes curl.
 #───────────────────────────────────────────────────────────────────────────────
 
-for ec in 6 7 22 28; do
-  echo "→ curl exit $ec propagates"
-  clean_cache; expect_exit "$ec" "health curl=$ec" run_curl_exit "$ec" health
-  clean_cache; expect_exit "$ec" "models curl=$ec" run_curl_exit "$ec" models
-  clean_cache; expect_exit "$ec" "raw curl=$ec"    run_curl_exit "$ec" raw GET /health
-  clean_cache; expect_exit "$ec" "msg curl=$ec"    run_curl_exit "$ec" msg default "hi"
-done
+if [[ "$BIN" == *.bash ]]; then
+  for ec in 6 7 22 28; do
+    echo "→ curl exit $ec propagates"
+    clean_cache; expect_exit "$ec" "health curl=$ec" run_curl_exit "$ec" health
+    clean_cache; expect_exit "$ec" "models curl=$ec" run_curl_exit "$ec" models
+    clean_cache; expect_exit "$ec" "raw curl=$ec"    run_curl_exit "$ec" raw GET /health
+    clean_cache; expect_exit "$ec" "msg curl=$ec"    run_curl_exit "$ec" msg default "hi"
+  done
+else
+  echo "→ curl exit propagation: skipped (Go binary uses net/http, not curl)"
+fi
 
 #───────────────────────────────────────────────────────────────────────────────
 # 3. Usage errors → exit 2
