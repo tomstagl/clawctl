@@ -26,6 +26,15 @@ jobs:
       - name: bash -n install/install.sh
         run: bash -n ./install/install.sh
 
+  smoke-static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash -n test/smoke.sh
+        run: bash -n test/smoke.sh
+      - name: shellcheck test/smoke.sh
+        run: shellcheck test/smoke.sh
+
   go:
     runs-on: ubuntu-latest
     env:

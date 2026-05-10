@@ -57,3 +57,17 @@ Status: done
 Files changed: internal/mcpserver/commands.go (clawctl_msg tool + handler + helpers), internal/mcpserver/commands_test.go (5-tool list + 3 msg tests), cmd/clawctl/mcp.go (count 4→5 in log + comment), cmd/clawctl/mcp_test.go (updated counts + tool names), docs/mcp.md (worked example rewritten for command server + clawctl_msg snippet), prd.json
 Notes: Redaction applied via redact.Apply with empty GwToken (no keychain access in MCP handler context); envelope.ToolResponse used directly but without schema validation since traceparent is empty; finish_reason mapping duplicated from msg.go since it is in package main.
 ---
+
+## US-009: Bootstrap helper (clawctl init)
+Iteration: 2026-05-10T14:00:00Z
+Status: done
+Files changed: cmd/clawctl/init.go (new), cmd/clawctl/init_test.go (new), cmd/clawctl/main.go (dispatch + help), prd.json
+Notes: isTTY uses os.ModeCharDevice — no new deps needed. initCheckTokenSource defaults to keychainTokenSource (reuses models.go factory); initCheckNewClient is a separate injectable var with Retries=0 for fast one-shot checks. Health is always attempted even if token fails (it's unauthenticated), so all three per-check results are always shown.
+---
+
+## US-010: Linux smoke test in CI
+Iteration: 2026-05-10T22:00:00Z
+Status: done
+Files changed: test/smoke.sh (--no-network flag + skip guard + shellcheck fixes), .github/workflows/ci.yml (smoke-static job), CONTRIBUTING.md (Running smoke tests section), prd.json
+Notes: Rewrote trace_line capture as `{ cmd >/dev/null; } 2>&1 | grep` to avoid SC2069; replaced echo with printf for redactor test to satisfy shellcheck; --no-network check placed before BIN executable check so offline runs don't need a built binary.
+---
