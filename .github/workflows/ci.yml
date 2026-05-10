@@ -35,6 +35,42 @@ jobs:
       - name: shellcheck test/smoke.sh
         run: shellcheck test/smoke.sh
 
+  install-smoke:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check for published releases
+        id: release-check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          releases=$(gh release list --repo "$GITHUB_REPOSITORY" --limit 1 2>/dev/null || true)
+          if [ -z "$releases" ]; then
+            echo "has_release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_release=true" >> "$GITHUB_OUTPUT"
+          fi
+      - name: Skip (no release published yet)
+        if: steps.release-check.outputs.has_release == 'false'
+        run: echo "no release published yet, skipping"
+      - name: Install clawctl via install.sh
+        if: steps.release-check.outputs.has_release == 'true'
+        env:
+          CLAWCTL_INSTALL_DIR: ${{ runner.temp }}/clawctl-install
+        run: bash install/install.sh
+      - name: Verify installed binary
+        if: steps.release-check.outputs.has_release == 'true'
+        env:
+          CLAWCTL_INSTALL_DIR: ${{ runner.temp }}/clawctl-install
+        run: |
+          out=$("$CLAWCTL_INSTALL_DIR/clawctl" version)
+          echo "$out"
+          echo "$out" | grep -q clawctl
+          "$CLAWCTL_INSTALL_DIR/clawctl" --help
+
   go:
     runs-on: ubuntu-latest
     env:

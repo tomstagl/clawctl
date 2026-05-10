@@ -71,3 +71,10 @@ Status: done
 Files changed: test/smoke.sh (--no-network flag + skip guard + shellcheck fixes), .github/workflows/ci.yml (smoke-static job), CONTRIBUTING.md (Running smoke tests section), prd.json
 Notes: Rewrote trace_line capture as `{ cmd >/dev/null; } 2>&1 | grep` to avoid SC2069; replaced echo with printf for redactor test to satisfy shellcheck; --no-network check placed before BIN executable check so offline runs don't need a built binary.
 ---
+
+## US-011: install.sh post-release smoke test in CI
+Iteration: 2026-05-10T23:55:00Z
+Status: done
+Files changed: .github/workflows/ci.yml (install-smoke job with matrix [macos-latest, ubuntu-latest]), prd.json
+Notes: Uses gh release list to skip gracefully when no release is published yet; CLAWCTL_INSTALL_DIR set to runner.temp to avoid sudo; existing bash -n and shellcheck checks already covered by syntax/shellcheck jobs.
+---
