@@ -313,3 +313,31 @@ test reader; dropped that case from the metacharacter test since US-020 names
 spaces/quotes/$/backticks specifically. go vet, CGO_ENABLED=0 go test ./...,
 bash -n, shellcheck (clawctl + install scripts) all clean.
 ---
+
+## US-021: Hard-fail Go `clawctl cli` when oc-remote missing
+Iteration: 2026-05-10T08:00:00Z
+Status: done
+Files changed: cmd/clawctl/cli.go, cmd/clawctl/cli_test.go, prd.json
+Notes: Added probeOcRemote(ctx, sshHost) — a separate `ssh -o BatchMode=yes
+-o ConnectTimeout=5 host 'test -x /usr/local/bin/oc-remote'` call that runs
+before the real invocation. On non-zero exit, runCLI prints the four-paragraph
+remediation block (mirrors the bash heredoc verbatim — names the missing
+binary path, the host, and the README install pointer) to stderr and returns
+2. Probe sends the test command as a single argument because ssh joins
+trailing argv into a remote shell string anyway, so one-arg matches the bash
+parity exactly. Reused the test/cli-hardening.sh shim strategy: extended the
+fake-ssh shim to distinguish probe vs. real-call by inspecting argv after
+option-stripping (single arg starting with "test -x" → probe), with two env
+knobs (OCREMOTE_PROBE_EXIT, OCREMOTE_CALL_EXIT) so individual tests
+parameterise behaviour without rewriting the shim. Two new tests cover the
+US-021 acceptance criteria: ExitsWhenOcRemoteMissing asserts exit 2 plus
+remediation message content (oc-remote not found, install path, host name,
+README.md pointer) AND that the real-call branch never ran (argv.log absent);
+ProceedsWhenOcRemotePresent asserts exit 0 and that the recorded argv tail
+matches `-- /usr/local/bin/oc-remote agents list`. Updated
+TestRunCLI_ForwardsExitCode to set OCREMOTE_CALL_EXIT=7 (probe still passes)
+since the older "ssh always exits 7" shim would now trip the probe. Trip
+hazard: macOS Tahoe go1.22.12 internal linker emits binaries missing
+LC_UUID — `go test` aborts in dyld; works fine with -ldflags="-linkmode=external".
+go test all packages clean (cmd/clawctl + 8 internal pkgs), go vet clean.
+---
