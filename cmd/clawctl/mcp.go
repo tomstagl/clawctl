@@ -24,12 +24,14 @@ import (
 // so Claude Code / Codex / any other stdio MCP client can register
 // clawctl with `claude mcp add clawctl --command clawctl --args mcp`.
 //
-// US-025 wires only tools/list. The per-tool handler is the package-level
-// stub from internal/mcpserver; US-026 replaces it with the chat-completions
-// path. We deliberately don't surface a CLAWCTL_LOG=json log line here: the
-// MCP stdio protocol owns stdout, so JSON logs would corrupt the framing.
-// The logging.Logger is still constructed so the human-mode WARNING/info
-// surface stays consistent with the rest of the typed binary.
+// US-026 wires the per-tool handler to /v1/chat/completions through the
+// same api.Client used by `clawctl msg`, returning a v1 ToolResponse
+// envelope and propagating a fresh W3C traceparent into the result
+// _meta. We deliberately don't surface a CLAWCTL_LOG=json log line
+// here: the MCP stdio protocol owns stdout, so JSON logs would corrupt
+// the framing. The logging.Logger is still constructed so the human-
+// mode WARNING/info surface stays consistent with the rest of the
+// typed binary.
 func runMCP(ctx context.Context, cfg config.Config, args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	log := logging.New(cfg.Log, stderr, "mcp", logging.TransportAPI)
 	defer func() { code = log.Finish(code) }()
@@ -69,11 +71,12 @@ func runMCP(ctx context.Context, cfg config.Config, args []string, stdin io.Read
 		return 1
 	}
 
+	handler := newMCPCallHandler(cfg, client, func() string { return readGwToken(cfg) })
 	srv, err := mcpserver.Build(&mcpserver.Implementation{
 		Name:    "clawctl",
 		Title:   "clawctl — openclaw MCP gateway",
 		Version: version,
-	}, agents, nil)
+	}, agents, handler)
 	if err != nil {
 		fmt.Fprintf(stderr, "clawctl mcp: build server: %v\n", err)
 		return 1

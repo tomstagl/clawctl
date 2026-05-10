@@ -432,3 +432,54 @@ US-011's "Go 1.22+ toolchain" criterion). go vet ./... clean,
 CGO_ENABLED=0 go test ./... clean across all 12 packages, bash -n +
 shellcheck (clawctl, install/install.sh, install/ssh-setup.sh) all clean.
 ---
+
+## US-026: Implement MCP tools/call (non-streaming)
+Iteration: 2026-05-10T11:30:00Z
+Status: done
+Files changed: cmd/clawctl/{mcp.go, mcp_call.go (new), mcp_call_test.go (new)}, prd.json
+Notes: New newMCPCallHandler in cmd/clawctl/mcp_call.go wires the
+previously-stubbed mcpserver.CallHandler seam to the same /v1/chat/completions
+path used by `clawctl msg`. Each tools/call: generates a fresh W3C
+traceparent (trace.New), forwards it on the gateway POST, applies the
+boundary redactor (with the same gw-token literal substitution as msg),
+serialises the result as a v1 envelope.ToolResponse, and returns it
+inside *mcp.CallToolResult with three things the SDK gives us: Content
+(the JSON envelope text — for clients that parse text), StructuredContent
+(the typed value — for clients using ToolHandlerFor-style strict typing),
+and Meta (a single key "clawctl.traceparent" echoing the same trace so
+clients can correlate without parsing the envelope). Trace propagation:
+boundary in → traceparent header on the gateway call → envelope.traceparent
+field → result _meta. Errors are in-band: a typed envelope.ToolError with
+schema-enum Code, optional HTTPStatus, and clawctl ExitCode lands in
+Content with IsError=true, so the LLM sees the failure and self-corrects
+rather than getting an MCP transport reject. classifyMCPGatewayError +
+mapHTTPStatusToErrorCode mirror the curl-aligned exit-code contract: 400
+→ gateway.bad_request, 401 → gateway.unauthorized, 403 → gateway.forbidden,
+404 → gateway.not_found, 429 → gateway.rate_limited, 500 → gateway.internal,
+502/503/504 → gateway.upstream_unavailable, refused → transport.connection_refused
+(exit 7), DNS → transport.dns (exit 6), timeout → transport.timeout (exit 28),
+keychain miss → gateway.unauthorized (exit 2). Wired in runMCP by replacing
+the nil third arg to mcpserver.Build with newMCPCallHandler(cfg, client,
+func(){return readGwToken(cfg)}). Tests: TestNewMCPCallHandler_HappyPath
+asserts gateway path/method/auth/traceparent + envelope shape + _meta
+echo; RejectsEmptyText covers the usage.invalid_argument shortcut;
+RejectsUnparseableArgs covers malformed JSON args; GatewayHTTPErrorMaps
+table-tests all 9 status codes against the schema enum;
+TransportConnRefused covers the closed-port path.
+TestRunMCP_ToolsCallReturnsToolResponse is the e2e flavour the AC names:
+mock /v1/models + /v1/chat/completions, in-memory MCP transport via
+installInMemoryMCPRun, real client.CallTool, asserts ToolResponse body
++ traceparent in _meta + same traceparent on the gateway request.
+Trip hazards: (a) StructuredContent and Content carry the *same* envelope
+in two shapes — clients pick one; we don't try to make them mutually
+exclusive because some MCP UI surfaces only render Content while typed
+clients prefer StructuredContent. (b) Per-call we don't emit a JSON log
+line on stderr — the parent runMCP logger covers the lifetime of the MCP
+process; per-call logging would be noisy for long-lived servers and
+would re-overwrite the parent logger's traceparent. (c) The error-path
+helper takes a `tp string` rather than building one to keep the
+"trace generation broke" path representable (sub-1ms; vanishingly rare).
+go vet ./... clean, CGO_ENABLED=0 go test ./... clean across all 12
+packages, bash -n + shellcheck (clawctl, install/install.sh,
+install/ssh-setup.sh) all clean.
+---
