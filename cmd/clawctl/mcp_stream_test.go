@@ -119,12 +119,13 @@ func TestNewMCPCallHandler_StreamingForwardsStreamTrue(t *testing.T) {
 	}
 }
 
-// TestRunMCP_ToolsCallStreamingEmitsProgressNotifications is the
-// end-to-end flavour US-027 names: drive a real MCP client through the
-// in-memory transport, attach a progressToken, and assert N progress
-// notifications arrive in order followed by the final ToolResponse with
-// byte-identical chunk content.
+// TestRunMCP_ToolsCallStreamingEmitsProgressNotifications is preserved as
+// handler-level coverage via TestNewMCPStreamingCallHandler_* tests above.
+// The runMCP integration path was removed in US-007 when the server switched
+// from agent-based tools to static command tools (clawctl_health etc.).
+// The clawctl_msg tool (US-008) will restore end-to-end streaming coverage.
 func TestRunMCP_ToolsCallStreamingEmitsProgressNotifications(t *testing.T) {
+	t.Skip("agent-based runMCP path removed in US-007; restored in US-008 via clawctl_msg")
 	withStubTokenSource(t, "tok")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -288,12 +289,16 @@ func TestRunMCP_ToolsCallStreamingEmitsProgressNotifications(t *testing.T) {
 	}
 }
 
+// TestRunMCP_ToolsCallStreamingNoProgressTokenSuppressesNotifications is
+// preserved as handler-level coverage. See TestRunMCP_ToolsCallStreamingEmitsProgressNotifications
+// for the removal rationale.
 // TestRunMCP_ToolsCallStreamingNoProgressTokenSuppressesNotifications
 // asserts the spec-mandated "no progressToken means no progress
 // notifications" behaviour. We still hit the SSE backend and return the
 // final ToolResponse (so callers that opt into streaming for the
 // aggregated output get it), but no progress traffic flows.
 func TestRunMCP_ToolsCallStreamingNoProgressTokenSuppressesNotifications(t *testing.T) {
+	t.Skip("agent-based runMCP path removed in US-007; restored in US-008 via clawctl_msg")
 	withStubTokenSource(t, "tok")
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

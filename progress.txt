@@ -43,3 +43,10 @@ Status: done
 Files changed: docs/mcp.md (Security section added), internal/mcpserver/server.go (comment at tool-registration site), prd.json
 Notes: No code changes required; cli subcommand was already absent from mcp.go. Added docs and a comment to make the exclusion policy explicit and self-documenting for future contributors.
 ---
+
+## US-007: Redesign MCP server: command-based tools (health, models, verify, trace)
+Iteration: 2026-05-10T22:30:00Z
+Status: done
+Files changed: internal/mcpserver/commands.go (new), internal/mcpserver/commands_test.go (new), cmd/clawctl/mcp.go (rewritten), cmd/clawctl/mcp_test.go (updated), cmd/clawctl/mcp_call_test.go (removed unused imports + deleted integration test), cmd/clawctl/mcp_stream_test.go (skipped two integration tests), prd.json
+Notes: BuildCommandServer takes (impl, src, baseURL, jaegerURL) — jaegerURL added over the AC spec since trace requires it. Integration tests for agent-based runMCP path are skipped with explanation; handler-level tests remain. The Build/Agent path stays in server.go for US-008 future use.
+---

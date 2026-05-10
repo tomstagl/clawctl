@@ -1,14 +1,12 @@
 package main
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -260,109 +258,6 @@ func TestNewMCPCallHandler_TransportConnRefused(t *testing.T) {
 	}
 	if te.ExitCode == nil || *te.ExitCode != 7 {
 		t.Errorf("ToolError.exit_code = %v, want 7", te.ExitCode)
-	}
-}
-
-// TestRunMCP_ToolsCallReturnsToolResponse is the end-to-end MCP flavour
-// the US-026 acceptance criterion names: mock /v1/models for
-// registration, mock /v1/chat/completions for the call, drive the
-// in-memory MCP transport from a real client, assert the result is a
-// ToolResponse and the traceparent appears in _meta.
-func TestRunMCP_ToolsCallReturnsToolResponse(t *testing.T) {
-	withStubTokenSource(t, "tok")
-
-	var chatHits int32
-	var sentTraceparent string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/models":
-			_, _ = w.Write([]byte(`{"data":[{"id":"openclaw/concierge","description":"helps users"}]}`))
-		case "/v1/chat/completions":
-			atomic.AddInt32(&chatHits, 1)
-			sentTraceparent = r.Header.Get("traceparent")
-			_, _ = w.Write([]byte(stockChatResponse))
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-
-	cfg := config.Config{
-		Host:            srv.URL,
-		CacheDir:        t.TempDir(),
-		KeychainService: "test",
-		Timeout:         2 * time.Second,
-		ModelsTTL:       60 * time.Second,
-	}
-
-	clientTransport, ready, done := installInMemoryMCPRun(t)
-
-	resCh := make(chan int, 1)
-	var stdout, stderr bytes.Buffer
-	go func() {
-		resCh <- runMCP(context.Background(), cfg, nil, nil, &stdout, &stderr)
-	}()
-	select {
-	case <-ready:
-	case <-time.After(5 * time.Second):
-		t.Fatalf("server did not enter mcpRun in 5s; stderr=%s", stderr.String())
-	}
-
-	cli := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "0"}, nil)
-	cs, err := cli.Connect(context.Background(), clientTransport, nil)
-	if err != nil {
-		t.Fatalf("Connect: %v\nstderr=%s", err, stderr.String())
-	}
-	defer cs.Close()
-
-	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
-		Name:      "concierge",
-		Arguments: map[string]any{"text": "hello"},
-	})
-	if err != nil {
-		t.Fatalf("CallTool: %v\nstderr=%s", err, stderr.String())
-	}
-	if res.IsError {
-		t.Fatalf("IsError = true, want false; content=%q", textOf(res))
-	}
-	if atomic.LoadInt32(&chatHits) != 1 {
-		t.Errorf("/v1/chat/completions hit count = %d, want 1", atomic.LoadInt32(&chatHits))
-	}
-
-	var resp envelope.ToolResponse
-	if err := json.Unmarshal([]byte(textOf(res)), &resp); err != nil {
-		t.Fatalf("decode tool result content: %v\ntext=%q", err, textOf(res))
-	}
-	if resp.EnvelopeVersion != "1" || resp.Kind != "tool_response" {
-		t.Errorf("envelope shape: version=%q kind=%q", resp.EnvelopeVersion, resp.Kind)
-	}
-	if resp.Agent != "openclaw/concierge" {
-		t.Errorf("envelope.agent = %q", resp.Agent)
-	}
-	if resp.Output != "hello back" {
-		t.Errorf("envelope.output = %q", resp.Output)
-	}
-	if resp.Traceparent == "" || resp.Traceparent != sentTraceparent {
-		t.Errorf("envelope.traceparent (%q) != gateway header (%q)", resp.Traceparent, sentTraceparent)
-	}
-
-	gotMeta, _ := res.Meta[metaKeyTraceparent].(string)
-	if gotMeta == "" {
-		t.Errorf("_meta[%s] missing; want traceparent echoed for client correlation", metaKeyTraceparent)
-	}
-	if gotMeta != sentTraceparent {
-		t.Errorf("_meta[%s] (%q) != gateway header (%q)", metaKeyTraceparent, gotMeta, sentTraceparent)
-	}
-
-	_ = cs.Close()
-	<-done
-	select {
-	case code := <-resCh:
-		if code != 0 {
-			t.Errorf("runMCP exit = %d, want 0", code)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatalf("runMCP did not return after client close")
 	}
 }
 

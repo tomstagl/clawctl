@@ -4,13 +4,10 @@ import (
 	"bytes"
 	"context"
 	"io"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -65,69 +62,17 @@ func TestRunMCP_RejectsExtraArgs(t *testing.T) {
 	}
 }
 
-func TestRunMCP_NoAgentsExits1(t *testing.T) {
-	withStubTokenSource(t, "tok")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(`{"data":[{"id":"non-openclaw/skipme"}]}`))
-	}))
-	defer srv.Close()
-
-	cfg := config.Config{
-		Host:            srv.URL,
-		CacheDir:        t.TempDir(),
-		KeychainService: "test",
-		Timeout:         2 * time.Second,
-		ModelsTTL:       60 * time.Second,
-	}
-	var stdout, stderr bytes.Buffer
-	code := runMCP(context.Background(), cfg, nil, nil, &stdout, &stderr)
-	if code != 1 {
-		t.Errorf("exit = %d, want 1", code)
-	}
-	if !strings.Contains(stderr.String(), "no openclaw agents") {
-		t.Errorf("stderr = %q, want 'no openclaw agents' marker", stderr.String())
-	}
-}
-
-func TestRunMCP_FetchFailureMaps(t *testing.T) {
-	withStubTokenSource(t, "tok")
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
-	addr := srv.URL
-	srv.Close()
-
-	cfg := config.Config{
-		Host:            addr,
-		CacheDir:        t.TempDir(),
-		KeychainService: "test",
-		Timeout:         time.Second,
-		ModelsTTL:       60 * time.Second,
-	}
-	var stdout, stderr bytes.Buffer
-	code := runMCP(context.Background(), cfg, nil, nil, &stdout, &stderr)
-	if code != 7 {
-		t.Errorf("exit = %d, want 7 (connection refused)", code)
-	}
-}
-
-// TestRunMCP_ToolsListReturnsAtLeastOne is the in-process flavour of the
-// US-025 acceptance criterion: against a mock /v1/models the server's
-// tools/list returns the expected agents. The subprocess flavour lives in
-// TestMCPEndToEnd_SpawnAndListTools below.
-func TestRunMCP_ToolsListReturnsAtLeastOne(t *testing.T) {
+// TestRunMCP_ToolsListReturnsFourCommandTools verifies that the command-based
+// MCP server registers exactly the four read-only command tools and that
+// tools/list returns them without any startup network call.
+func TestRunMCP_ToolsListReturnsFourCommandTools(t *testing.T) {
 	withStubTokenSource(t, "tok")
 
-	var hits int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&hits, 1)
-		_, _ = w.Write([]byte(`{"data":[
-			{"id":"openclaw/concierge","description":"helps users"},
-			{"id":"openclaw/dead-code-sweep"}
-		]}`))
-	}))
-	defer srv.Close()
-
+	// Host must be non-empty to pass the cfg.Host check, but no actual
+	// request is made at startup — the command server registers tools
+	// statically.
 	cfg := config.Config{
-		Host:            srv.URL,
+		Host:            "http://mock:9999",
 		CacheDir:        t.TempDir(),
 		KeychainService: "test",
 		Timeout:         2 * time.Second,
@@ -136,8 +81,6 @@ func TestRunMCP_ToolsListReturnsAtLeastOne(t *testing.T) {
 
 	clientTransport, ready, done := installInMemoryMCPRun(t)
 
-	// runMCP blocks on srv.Run until the transport closes; run it on a
-	// goroutine and tear down via cs.Close after the assertions.
 	resCh := make(chan int, 1)
 	var stdout, stderr bytes.Buffer
 	go func() {
@@ -159,22 +102,21 @@ func TestRunMCP_ToolsListReturnsAtLeastOne(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools: %v", err)
 	}
-	if len(res.Tools) < 1 {
-		t.Fatalf("len(tools) = %d, want >= 1", len(res.Tools))
+	if len(res.Tools) != 4 {
+		t.Fatalf("len(tools) = %d, want 4\ntools=%v\nstderr=%s", len(res.Tools), res.Tools, stderr.String())
 	}
 	names := map[string]bool{}
 	for _, tool := range res.Tools {
 		names[tool.Name] = true
 	}
-	for _, want := range []string{"concierge", "dead-code-sweep"} {
+	for _, want := range []string{"clawctl_health", "clawctl_models", "clawctl_verify", "clawctl_trace"} {
 		if !names[want] {
 			t.Errorf("tools/list missing %q; got %v", want, names)
 		}
 	}
 
-	// Server-side stderr surface should announce tool count.
-	if !strings.Contains(stderr.String(), "registered 2 tool(s)") {
-		t.Errorf("stderr = %q, want 'registered 2 tool(s)'", stderr.String())
+	if !strings.Contains(stderr.String(), "registered 4 command tools") {
+		t.Errorf("stderr = %q, want 'registered 4 command tools' marker", stderr.String())
 	}
 
 	_ = cs.Close()
@@ -189,39 +131,25 @@ func TestRunMCP_ToolsListReturnsAtLeastOne(t *testing.T) {
 	}
 }
 
-// TestMCPEndToEnd_SpawnAndListTools is the subprocess flavour US-025
-// names explicitly: spawn `clawctl mcp` as a child process, send tools/list
-// over the MCP CommandTransport, assert at least one tool is returned.
+// TestMCPEndToEnd_SpawnAndListTools is the subprocess flavour: spawn
+// `clawctl mcp` as a child process, send tools/list over the MCP
+// CommandTransport, and assert the four command tools are returned.
 //
-// The mock /v1/models is a real httptest server; the binary is built fresh
-// each test run via `go build` into the test's TempDir so we don't depend
-// on a checked-in artifact. The build is the slow step (~1s) but it keeps
-// the test self-contained — running `go test ./...` works on a fresh clone
-// without a separate setup target.
+// The binary is built fresh each test run via `go build` into the test's
+// TempDir so we don't depend on a checked-in artifact.
 func TestMCPEndToEnd_SpawnAndListTools(t *testing.T) {
 	if testing.Short() {
 		t.Skip("subprocess build is slow; skipped under -short")
 	}
 
-	models := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("Authorization"); got != "Bearer e2e-token" {
-			t.Errorf("auth = %q, want 'Bearer e2e-token'", got)
-		}
-		_, _ = w.Write([]byte(`{"data":[
-			{"id":"openclaw/main","description":"e2e demo agent"},
-			{"id":"openclaw/test-coverage-filler"}
-		]}`))
-	}))
-	defer models.Close()
-
 	bin := buildClawctlForTest(t)
 	cacheDir := t.TempDir()
 
-	// Wire a fake `security` shim on PATH so the keychain reader returns
-	// our test token without touching the real macOS Keychain.
+	// Wire a fake `security` shim on PATH so the keychain reader does not
+	// touch the real macOS Keychain. The token is never actually retrieved
+	// for a tools/list call; the shim is here for defence.
 	pathDir := t.TempDir()
 	writeShim(t, filepath.Join(pathDir, "security"), `#!/bin/sh
-# fake security: only respond to find-generic-password -w
 case "$1" in
   find-generic-password)
     echo "e2e-token"
@@ -235,7 +163,7 @@ esac
 
 	cmd := exec.Command(bin, "mcp")
 	cmd.Env = append(os.Environ(),
-		"CLAWCTL_HOST="+models.URL,
+		"CLAWCTL_HOST=http://localhost:19999", // unused at tools/list time
 		"CLAWCTL_CACHE_DIR="+cacheDir,
 		"CLAWCTL_KEYCHAIN_SERVICE=clawctl-e2e",
 		"CLAWCTL_TIMEOUT=5",
@@ -262,26 +190,23 @@ esac
 	if err != nil {
 		t.Fatalf("ListTools: %v\nstderr=%s", err, serr.String())
 	}
-	if len(res.Tools) < 1 {
-		t.Fatalf("len(tools) = %d, want >= 1\nstderr=%s", len(res.Tools), serr.String())
+	if len(res.Tools) != 4 {
+		t.Fatalf("len(tools) = %d, want 4\nstderr=%s", len(res.Tools), serr.String())
 	}
 	names := map[string]string{}
 	for _, tool := range res.Tools {
 		names[tool.Name] = tool.Description
 	}
-	for _, want := range []string{"main", "test-coverage-filler"} {
+	for _, want := range []string{"clawctl_health", "clawctl_models", "clawctl_verify", "clawctl_trace"} {
 		if _, ok := names[want]; !ok {
 			t.Errorf("tools/list missing %q; got %v", want, names)
 		}
-	}
-	if got := names["main"]; got != "e2e demo agent" {
-		t.Errorf("main.Description = %q, want 'e2e demo agent' (gateway-supplied)", got)
 	}
 }
 
 // buildClawctlForTest compiles the typed binary into the test's TempDir
 // and returns its path. CGO_ENABLED=0 is set so the build matches the
-// release-workflow contract documented in US-029 (single static binary).
+// release-workflow contract documented in US-002 (single static binary).
 func buildClawctlForTest(t *testing.T) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "clawctl")
@@ -294,8 +219,7 @@ func buildClawctlForTest(t *testing.T) string {
 	return bin
 }
 
-// writeShim writes a 0755 shell script to path. Mirrors the cli_test.go
-// PATH-shim helper used by US-020/US-021.
+// writeShim writes a 0755 shell script to path.
 func writeShim(t *testing.T, path, body string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(body), 0o755); err != nil {
