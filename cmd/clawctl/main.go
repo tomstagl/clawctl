@@ -40,6 +40,8 @@ func main() {
 		modelsCmd(cfg)
 	case "msg":
 		msgCmd(cfg, args[1:])
+	case "stream":
+		streamCmd(cfg, args[1:])
 	case "raw":
 		rawCmd(cfg, args[1:])
 	case "_redact":
@@ -68,9 +70,10 @@ func printHelp(w io.Writer, cfg config.Config) {
                                               chat with agent; stdin if no text
                                               default: emits a v1 ToolResponse JSON document
                                               --text: emits the plain content string (bash parity)
-  clawctl stream [-s SESSION] [--envelope] AGENT [TEXT]
-                                              same, SSE; output buffered + redacted
-                                              --envelope emits NDJSON ToolStreamChunks + final ToolResponse
+  clawctl stream [-s SESSION] [--text] AGENT [TEXT]
+                                              same, SSE; redacted then emitted
+                                              default: emits NDJSON ToolStreamChunks + final ToolResponse
+                                              --text: emits buffered plain content (bash parity)
   clawctl raw METHOD PATH [curl-args]         arbitrary call with auth + traceparent
   clawctl cli SUBCOMMAND...                   run `+"`openclaw …`"+` over SSH on host
   clawctl verify KIND ARGS                    R-2 claim verification (see 'clawctl verify help')
