@@ -275,3 +275,41 @@ gateway message, ECONNREFUSED → exit 7, dt0c01 redaction populates
 redactions[] + WARNING + audit-file. go vet, go test ./..., bash -n,
 shellcheck all clean (CGO_ENABLED=0).
 ---
+
+## US-019: Implement Go `clawctl stream` emitting NDJSON envelope
+Iteration: 2026-05-10T07:45:15Z
+Status: done
+Files changed: cmd/clawctl/stream.go (new), cmd/clawctl/stream_test.go (new), cmd/clawctl/main.go (dispatcher + help text), prd.json
+Notes: Buffers SSE, runs per-chunk + aggregate redaction passes for boundary safety; coalesces into one chunk when a secret crosses a delta boundary. 11 unit tests pass under CGO_ENABLED=0 (matches CI). Local "go test" without CGO_ENABLED=0 hits a macOS dyld LC_UUID quirk unrelated to this change.
+---
+
+## US-020: Implement Go `clawctl cli` with ControlMaster-aware ssh
+Iteration: 2026-05-10T08:30:00Z
+Status: done
+Files changed: cmd/clawctl/cli.go (new), cmd/clawctl/cli_test.go (new), cmd/clawctl/main.go (dispatcher), prd.json
+Notes: New runCLI shells out via exec.CommandContext("ssh", sshArgs...) where
+sshArgs is a fixed prefix (-o ControlMaster=auto, -o ControlPath=~/.ssh/cm-%r@%h:%p,
+-o ControlPersist=10m, $CLAWCTL_SSH_HOST, --, /usr/local/bin/oc-remote) appended
+with the user's argv. Because exec.Command takes argv as a []string, the host
+shell never sees argv as text — spaces, single/double quotes, $(...), and
+backticks reach oc-remote intact. Child exit codes are propagated verbatim via
+*exec.ExitError so transport-layer failures (ssh exit 255, oc-remote 127) reach
+the caller unchanged; missing CLAWCTL_SSH_HOST exits 2 with the same
+remediation message as the bash _require_ssh_host. Did NOT include the
+oc-remote presence probe — that's US-021's scope; for now a missing
+oc-remote surfaces as ssh's exit 127. Test approach mirrors
+test/cli-hardening.sh: a tempdir-installed fake `ssh` shim records argv into
+argv.log, and t.Setenv("PATH", …) prepends the shim dir for the duration of
+the test. Considered gliderlabs/ssh per US-020's "such as" wording but rejected
+it — pulling in an in-process ssh server contradicts the repo's "no new runtime
+deps" posture (CLAUDE.md), and a PATH-shim already validates the only thing
+actually at risk: argv preservation through exec.Command. 5 unit tests cover:
+missing ssh host (exit 2 + remediation), full argv shape including the three
+-o flags and oc-remote anchor, US-020's explicit metacharacter list (spaces /
+quotes / $ / backticks), exit-code passthrough (shim exits 7, runCLI returns
+7), and the no-args case (oc-remote still trails). Trip-hazard: the shim's
+log format prints argv one-per-line, so embedded \n in argv would corrupt the
+test reader; dropped that case from the metacharacter test since US-020 names
+spaces/quotes/$/backticks specifically. go vet, CGO_ENABLED=0 go test ./...,
+bash -n, shellcheck (clawctl + install scripts) all clean.
+---
