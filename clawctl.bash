@@ -1,9 +1,31 @@
 #!/usr/bin/env bash
-# clawctl — openclaw client (kubectl-style).
+# clawctl.bash — DEPRECATED bash entrypoint of clawctl.
+#
+# This script is the original bash MVP. The typed Go binary at
+# ./cmd/clawctl/ is now the supported entrypoint; this file is kept for
+# one release cycle as a transition aid for users who scripted against
+# the bash output. It will be removed in the next release.
+#
 # Phases A (transport), B-1 (response redaction), C (claim verification),
 # and lightweight Phase E (clawctl trace) live here.
 
 set -euo pipefail
+
+# Deprecation notice: emitted on `--help` / `help` / no-arg invocation
+# (see the dispatcher's help branch). Kept as a function so the message
+# stays in one place.
+_print_deprecation_banner() {
+  cat >&2 <<'EOF'
+╔════════════════════════════════════════════════════════════════════════════╗
+║  clawctl.bash is DEPRECATED.                                               ║
+║                                                                            ║
+║  The typed Go binary `clawctl` is now the supported entrypoint. Install    ║
+║  it via `install/install.sh` (release binary) or `go build -o clawctl      ║
+║  ./cmd/clawctl` from this repo. The bash entrypoint will be removed one    ║
+║  release after this one — please migrate.                                  ║
+╚════════════════════════════════════════════════════════════════════════════╝
+EOF
+}
 
 CLAWCTL_HOST="${CLAWCTL_HOST:-}"
 CLAWCTL_KEYCHAIN_SERVICE="${CLAWCTL_KEYCHAIN_SERVICE:-openclaw-gateway-token}"
@@ -748,8 +770,9 @@ sys.exit(0)
     ;;
 
   help|--help|-h|"")
+    _print_deprecation_banner
     cat <<EOF
-clawctl — openclaw client (host: ${CLAWCTL_HOST:-<unset>})
+clawctl.bash — openclaw client, bash entrypoint (DEPRECATED; host: ${CLAWCTL_HOST:-<unset>})
 
   clawctl health                              gateway liveness
   clawctl models                              list registered agents (60s cache)

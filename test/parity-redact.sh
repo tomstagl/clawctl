@@ -54,7 +54,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BASH_BIN="$ROOT/clawctl"
+BASH_BIN="$ROOT/clawctl.bash"
 TMP="$(mktemp -d)"
 # Build the Go binary inside the repo (a sibling of the bash entrypoint)
 # rather than under /tmp: macOS gatekeeper has been observed to reject

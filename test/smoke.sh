@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-BIN="${BIN:-$(cd "$(dirname "$0")/.." && pwd)/clawctl}"
+BIN="${BIN:-$(cd "$(dirname "$0")/.." && pwd)/clawctl.bash}"
 
 if [[ ! -x "$BIN" ]]; then
   echo "FAIL: $BIN not executable" >&2

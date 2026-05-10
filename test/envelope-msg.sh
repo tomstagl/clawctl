@@ -21,7 +21,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BIN="$ROOT/clawctl"
+BIN="$ROOT/clawctl.bash"
 SCHEMA="$ROOT/schemas/envelope.v1.json"
 
 if [[ ! -x "$BIN" ]]; then

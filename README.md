@@ -60,6 +60,17 @@ cd clawctl
 go build -o /usr/local/bin/clawctl ./cmd/clawctl
 ```
 
+### Migrating from `clawctl.bash` (deprecated)
+
+The original bash MVP still ships in this repo as [`clawctl.bash`](clawctl.bash) for one release cycle and prints a deprecation banner on `clawctl.bash --help`. It will be removed in the release **after** the one that introduces this rename — pin to a tag if you need it longer.
+
+The typed Go binary is the supported entrypoint and reproduces every subcommand of the bash script (`health`, `models`, `msg`, `stream`, `raw`, `cli`, `verify`, `trace`, plus `mcp`). Output formats are byte-compatible where the bash script set a contract; the parity test suite under `test/parity-*.sh` enforces this. To migrate:
+
+1. Install the typed binary (Homebrew, `install/install.sh`, or `go build` above).
+2. Replace `clawctl.bash <subcommand>` with `clawctl <subcommand>` in your scripts.
+3. If you depended on the bash script's stderr text exactly, run `test/parity-*.sh` to confirm the Go output matches your assumption — the parity tests assert the documented contract, not every byte.
+4. Delete your local copy of `clawctl.bash` once your tooling is on the typed binary.
+
 ### SSH connection reuse (recommended for `clawctl cli`)
 
 `clawctl cli` shells out over SSH on every invocation. Without connection multiplexing, every call pays the TCP+auth handshake — typically 500–800ms before any work happens. The repo ships an ssh-config snippet that enables ControlMaster reuse so the second and subsequent calls within 10 minutes reuse the master connection.

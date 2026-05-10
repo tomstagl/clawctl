@@ -21,7 +21,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-BASH_BIN="$ROOT/clawctl"
+BASH_BIN="$ROOT/clawctl.bash"
 TMP="$(mktemp -d)"
 GO_BIN="$TMP/clawctl-go"
 SERVER_PID=""
