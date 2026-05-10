@@ -23,6 +23,7 @@ type Config struct {
 	NoRedact         bool
 	JaegerUI         string
 	Log              string
+	JSONOutput       bool
 }
 
 // Defaults returns a Config populated entirely from defaults. Useful for tests
@@ -73,6 +74,9 @@ func Load() Config {
 	}
 	if v := os.Getenv("CLAWCTL_LOG"); v != "" {
 		c.Log = v
+	}
+	if os.Getenv("CLAWCTL_OUTPUT") == "json" {
+		c.JSONOutput = true
 	}
 
 	return c

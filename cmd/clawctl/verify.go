@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -38,6 +39,44 @@ func runVerify(ctx context.Context, cfg config.Config, args []string, stdout, st
 	}
 
 	switch sub {
+	case "", "help", "-h", "--help":
+		fmt.Fprint(stderr, verifyHelpText())
+		if cfg.JSONOutput {
+			_ = writeJSONErr(stdout, "verify", 2, "usage: clawctl verify <kind> <args>", "")
+		}
+		return 2
+	case "commit", "pr", "issue", "file":
+		// handled below
+	default:
+		msg := fmt.Sprintf("unknown kind '%s' (try 'clawctl verify help')", sub)
+		fmt.Fprintf(stderr, "clawctl verify: %s\n", msg)
+		if cfg.JSONOutput {
+			_ = writeJSONErr(stdout, "verify", 2, msg, "")
+		}
+		return 2
+	}
+
+	if cfg.JSONOutput {
+		var capOut, capErr bytes.Buffer
+		exitCode := verifyDispatch(ctx, sub, rest, &capOut, &capErr)
+		errMsg := strings.TrimRight(capErr.String(), "\n")
+		_, _ = io.WriteString(stderr, capErr.String())
+		if exitCode == 0 {
+			msg := strings.TrimRight(capOut.String(), "\n")
+			data, _ := json.Marshal(map[string]string{"message": msg})
+			_ = writeJSONOK(stdout, "verify", json.RawMessage(data))
+		} else {
+			_ = writeJSONErr(stdout, "verify", exitCode, errMsg, "")
+		}
+		return exitCode
+	}
+
+	return verifyDispatch(ctx, sub, rest, stdout, stderr)
+}
+
+// verifyDispatch routes to the appropriate verify sub-handler.
+func verifyDispatch(ctx context.Context, sub string, rest []string, stdout, stderr io.Writer) int {
+	switch sub {
 	case "commit":
 		return verifyCommit(ctx, rest, stdout, stderr)
 	case "pr":
@@ -46,13 +85,8 @@ func runVerify(ctx context.Context, cfg config.Config, args []string, stdout, st
 		return verifyGH(ctx, "issue", rest, stdout, stderr)
 	case "file":
 		return verifyFile(ctx, rest, stdout, stderr)
-	case "", "help", "-h", "--help":
-		fmt.Fprint(stderr, verifyHelpText())
-		return 2
-	default:
-		fmt.Fprintf(stderr, "clawctl verify: unknown kind '%s' (try 'clawctl verify help')\n", sub)
-		return 2
 	}
+	return 2
 }
 
 func verifyHelpText() string {

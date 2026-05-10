@@ -30,6 +30,17 @@ func main() {
 	cfg := config.Load()
 	args := os.Args[1:]
 
+	// Strip the global --json flag from any position before command dispatch.
+	// This supports both `clawctl --json health` and `clawctl health --json`.
+	// CLAWCTL_OUTPUT=json is already handled by config.Load().
+	for i, a := range args {
+		if a == "--json" {
+			args = append(args[:i], args[i+1:]...)
+			cfg.JSONOutput = true
+			break
+		}
+	}
+
 	cmd := "help"
 	if len(args) > 0 {
 		cmd = args[0]
@@ -102,7 +113,12 @@ Required env:
   CLAWCTL_SSH_HOST          user@host for the gateway machine (only required for 'clawctl cli')
   CLAWCTL_JAEGER_UI         Jaeger base URL (only required for 'clawctl trace')
 
+Global flags:
+  --json                    emit a stable JSON envelope on stdout (see docs/cli-contract.md)
+                            equivalent to CLAWCTL_OUTPUT=json
+
 Optional env:
+  CLAWCTL_OUTPUT=json       emit stable JSON envelopes on stdout (same as --json)
   CLAWCTL_KEYCHAIN_SERVICE  keychain service for the bearer token (default: openclaw-gateway-token)
   CLAWCTL_TIMEOUT           per-call timeout in seconds (default 60)
   CLAWCTL_NO_REDACT=1       disable client-side response redaction (NOT recommended)

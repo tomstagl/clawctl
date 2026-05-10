@@ -29,10 +29,16 @@ func runModels(ctx context.Context, cfg config.Config, stdout, stderr io.Writer)
 
 	if cfg.Host == "" {
 		fmt.Fprintln(stderr, "clawctl: CLAWCTL_HOST not set. Export it (e.g. export CLAWCTL_HOST=http://your-openclaw-host:18789).")
+		if cfg.JSONOutput {
+			_ = writeJSONErr(stdout, "models", 2, "CLAWCTL_HOST not set", "")
+		}
 		return 2
 	}
 	if cfg.CacheDir == "" {
 		fmt.Fprintln(stderr, "clawctl: CLAWCTL_CACHE_DIR is empty (HOME unresolved?)")
+		if cfg.JSONOutput {
+			_ = writeJSONErr(stdout, "models", 2, "CLAWCTL_CACHE_DIR is empty", "")
+		}
 		return 2
 	}
 
@@ -44,8 +50,20 @@ func runModels(ctx context.Context, cfg config.Config, stdout, stderr io.Writer)
 		return client.Get(ctx, "/v1/models", true)
 	})
 	if err != nil {
+		if cfg.JSONOutput {
+			code, msg := apiErrorDetails(cfg, err)
+			fmt.Fprintln(stderr, "clawctl: "+msg)
+			_ = writeJSONErr(stdout, "models", code, msg, "")
+			return code
+		}
 		return reportModelsError(cfg, err, stdout, stderr)
 	}
+
+	if cfg.JSONOutput {
+		_ = writeJSONOK(stdout, "models", toRawJSON(body))
+		return 0
+	}
+
 	if perr := prettyPrintJSON(stdout, body); perr != nil {
 		fmt.Fprintf(stderr, "clawctl: invalid JSON from %s/v1/models: %v\n", cfg.Host, perr)
 		return 1

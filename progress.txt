@@ -22,3 +22,17 @@ Status: done
 Files changed: internal/keychain/keychain.go (refactored), internal/keychain/keychain_darwin.go (new), internal/keychain/keychain_linux.go (new), internal/keychain/keychain_other.go (new), internal/keychain/keychain_test.go (updated), internal/keychain/keychain_darwin_test.go (new), internal/keychain/keychain_linux_test.go (new), docs/auth.md (new), prd.json
 Notes: Split keychain into shared+platform files with build tags; CLAWCTL_TOKEN_CMD is cross-platform override checked first; Linux path tries secret-tool then pass with descriptive error naming all three options; ErrNotFound is preserved for macOS path only.
 ---
+
+## US-004: Document and freeze the exit-code contract
+Iteration: 2026-05-10T18:00:00Z
+Status: done
+Files changed: docs/cli-contract.md (new), cmd/clawctl/health.go (newHealthAPIClient factory), cmd/clawctl/main.go (pointer in printHelp), cmd/clawctl/exitcode_test.go (new), README.md (link), prd.json
+Notes: Added newHealthAPIClient injectable factory in health.go so tests can inject a mock RoundTripper with Retries=0; all five exit codes (2/6/7/22/28) tested without real DNS or retry delays.
+---
+
+## US-005: Stable --json output mode across read commands
+Iteration: 2026-05-10T20:00:00Z
+Status: done
+Files changed: internal/config/config.go (JSONOutput field + CLAWCTL_OUTPUT=json), cmd/clawctl/jsonout.go (new: envelope types + helpers), cmd/clawctl/main.go (--json flag parsing + help update), cmd/clawctl/health.go (JSON mode branches), cmd/clawctl/models.go (JSON mode branches), cmd/clawctl/msg.go (JSON mode + msgJSONData + msgAPIErrorDetails), cmd/clawctl/verify.go (verifyDispatch extracted + buffer-capture JSON mode), cmd/clawctl/trace.go (JSON mode + traceJSONData + spanCount), cmd/clawctl/json_test.go (new: 10 tests), docs/cli-contract.md (--json section with data shapes and examples), prd.json
+Notes: Verify uses buffer-capture approach to avoid rewriting sub-handlers; capErr must be read before io.Copy drains it. Trace always exits 0 (best-effort) so JSON mode never emits an error envelope from Jaeger unreachability.
+---

@@ -35,11 +35,29 @@ func runTrace(ctx context.Context, cfg config.Config, args []string, stdout, std
 	}
 	if tid == "" {
 		fmt.Fprintln(stderr, "usage: clawctl trace <trace-id-32-hex>")
+		if cfg.JSONOutput {
+			_ = writeJSONErr(stdout, "trace", 2, "missing trace-id argument", "")
+		}
 		return 2
 	}
 	if cfg.JaegerUI == "" {
 		fmt.Fprintln(stderr, "clawctl: CLAWCTL_JAEGER_UI not set. Export your Jaeger base URL (e.g. http://jaeger:16686).")
+		if cfg.JSONOutput {
+			_ = writeJSONErr(stdout, "trace", 2, "CLAWCTL_JAEGER_UI not set", "")
+		}
 		return 2
+	}
+
+	if cfg.JSONOutput {
+		uiURL := cfg.JaegerUI + "/trace/" + tid
+		d := traceJSONData{TraceID: tid, UIURL: uiURL}
+		apiURL := cfg.JaegerUI + "/jaeger/api/traces/" + tid
+		if body, err := jaegerFetch(ctx, apiURL); err == nil {
+			d.SpansCount = spanCount(body)
+		}
+		data, _ := json.Marshal(d)
+		_ = writeJSONOK(stdout, "trace", json.RawMessage(data))
+		return 0
 	}
 
 	fmt.Fprintf(stdout, "trace-id: %s\n", tid)
@@ -55,6 +73,23 @@ func runTrace(ctx context.Context, cfg config.Config, args []string, stdout, std
 	}
 	renderTraceSummary(stdout, body)
 	return 0
+}
+
+// traceJSONData is the data shape for the trace command's --json envelope.
+type traceJSONData struct {
+	TraceID    string `json:"trace_id"`
+	UIURL      string `json:"ui_url"`
+	SpansCount *int   `json:"spans_count,omitempty"`
+}
+
+// spanCount extracts the span count from a Jaeger API response body, or nil.
+func spanCount(body []byte) *int {
+	var d jaegerResponse
+	if err := json.Unmarshal(body, &d); err != nil || len(d.Data) == 0 {
+		return nil
+	}
+	n := len(d.Data[0].Spans)
+	return &n
 }
 
 // jaegerFetch issues a 5s-timeout GET against the Jaeger API. The bash version

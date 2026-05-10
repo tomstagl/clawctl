@@ -39,16 +39,25 @@ func runMsg(ctx context.Context, cfg config.Config, args []string, stdin io.Read
 
 	if cfg.Host == "" {
 		fmt.Fprintln(stderr, "clawctl: CLAWCTL_HOST not set. Export it (e.g. export CLAWCTL_HOST=http://your-openclaw-host:18789).")
+		if cfg.JSONOutput {
+			_ = writeJSONErr(stdout, "msg", 2, "CLAWCTL_HOST not set", "")
+		}
 		return 2
 	}
 
 	flags, rest, code := parseMsgArgs(args, stderr)
 	if code != 0 {
+		if cfg.JSONOutput {
+			_ = writeJSONErr(stdout, "msg", code, "flag parse error", "")
+		}
 		return code
 	}
 	if len(rest) == 0 {
 		fmt.Fprintln(stderr, "usage: clawctl msg [-s <session-key>] [--text] <agent> [<text>]   (text from stdin if omitted)")
 		fmt.Fprintln(stderr, "       agent = 'default' or a specific agent slug")
+		if cfg.JSONOutput {
+			_ = writeJSONErr(stdout, "msg", 2, "missing agent argument", "")
+		}
 		return 2
 	}
 	agent := rest[0]
@@ -91,12 +100,21 @@ func runMsg(ctx context.Context, cfg config.Config, args []string, stdin io.Read
 		Retry:       false,
 	})
 	if err != nil {
+		if cfg.JSONOutput {
+			code, msg := msgAPIErrorDetails(cfg, err)
+			fmt.Fprintln(stderr, "clawctl: "+msg)
+			_ = writeJSONErr(stdout, "msg", code, msg, tp.TraceID)
+			return code
+		}
 		return reportMsgError(cfg, err, stderr)
 	}
 
 	parsed, perr := parseChatResponse(body)
 	if perr != nil {
 		fmt.Fprintf(stderr, "clawctl: invalid response from %s/v1/chat/completions: %v\n", cfg.Host, perr)
+		if cfg.JSONOutput {
+			_ = writeJSONErr(stdout, "msg", 1, "invalid response from gateway", tp.TraceID)
+		}
 		return 1
 	}
 
@@ -112,6 +130,23 @@ func runMsg(ctx context.Context, cfg config.Config, args []string, stdin io.Read
 			_ = os.MkdirAll(cfg.CacheDir, 0o755)
 			_ = redact.AppendAudit(filepath.Join(cfg.CacheDir, "last-redaction"), agent, kinds)
 		}
+	}
+
+	if cfg.JSONOutput {
+		d := msgJSONData{
+			Agent:        "openclaw/" + agent,
+			Content:      r.Text,
+			FinishReason: mapFinishReason(parsed.FinishReason),
+			Usage:        toEnvelopeUsage(parsed.Usage),
+			Redactions:   toEnvelopeRedactions(r.Hits),
+		}
+		data, merr := json.Marshal(d)
+		if merr != nil {
+			fmt.Fprintf(stderr, "clawctl: marshal msg data: %v\n", merr)
+			return 1
+		}
+		_ = writeJSONOK(stdout, "msg", json.RawMessage(data))
+		return 0
 	}
 
 	if flags.textOnly {
@@ -146,6 +181,25 @@ func runMsg(ctx context.Context, cfg config.Config, args []string, stdin io.Read
 	_, _ = stdout.Write(enc)
 	_, _ = stdout.Write([]byte{'\n'})
 	return 0
+}
+
+// msgJSONData is the data shape for the msg command's --json envelope.
+// It wraps the ToolResponse core fields without envelope metadata.
+type msgJSONData struct {
+	Agent        string               `json:"agent"`
+	Content      string               `json:"content"`
+	FinishReason string               `json:"finish_reason"`
+	Usage        envelope.Usage       `json:"usage"`
+	Redactions   []envelope.Redaction `json:"redactions"`
+}
+
+// msgAPIErrorDetails maps errors the msg command encounters (including keychain)
+// to (exitCode, message) without writing to any writer.
+func msgAPIErrorDetails(cfg config.Config, err error) (exitCode int, message string) {
+	if errors.Is(err, keychain.ErrNotFound) {
+		return 2, fmt.Sprintf("keychain item %q not found", cfg.KeychainService)
+	}
+	return apiErrorDetails(cfg, err)
 }
 
 type msgFlags struct {

@@ -35,14 +35,29 @@ func runHealth(ctx context.Context, cfg config.Config, stdout, stderr io.Writer)
 
 	if cfg.Host == "" {
 		fmt.Fprintln(stderr, "clawctl: CLAWCTL_HOST not set. Export it (e.g. export CLAWCTL_HOST=http://your-openclaw-host:18789).")
+		if cfg.JSONOutput {
+			_ = writeJSONErr(stdout, "health", 2, "CLAWCTL_HOST not set", "")
+		}
 		return 2
 	}
 
 	client := newHealthAPIClient(cfg.Host, cfg.Timeout)
 	body, err := client.Get(ctx, "/health", false)
 	if err != nil {
+		if cfg.JSONOutput {
+			code, msg := apiErrorDetails(cfg, err)
+			fmt.Fprintln(stderr, "clawctl: "+msg)
+			_ = writeJSONErr(stdout, "health", code, msg, "")
+			return code
+		}
 		return reportHealthError(cfg, err, stdout, stderr)
 	}
+
+	if cfg.JSONOutput {
+		_ = writeJSONOK(stdout, "health", toRawJSON(body))
+		return 0
+	}
+
 	if perr := prettyPrintJSON(stdout, body); perr != nil {
 		fmt.Fprintf(stderr, "clawctl: invalid JSON from %s/health: %v\n", cfg.Host, perr)
 		return 1

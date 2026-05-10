@@ -37,6 +37,105 @@ treat `clawctl` and `curl` interchangeably in shell error-handling logic.
 This discipline lets callers pipe `clawctl … | jq …` without polluting the
 JSON stream with diagnostic text.
 
+## Stable JSON output (`--json` / `CLAWCTL_OUTPUT=json`)
+
+Pass `--json` before or after the subcommand (or set `CLAWCTL_OUTPUT=json`) to
+make `health`, `models`, `msg`, `verify`, and `trace` emit a single JSON object
+on stdout instead of their default prose/envelope output.
+
+### Envelope shape
+
+```json
+{
+  "command": "<subcommand>",
+  "ok": true,
+  "data": { ... },
+  "error": null
+}
+```
+
+On error:
+
+```json
+{
+  "command": "<subcommand>",
+  "ok": false,
+  "data": null,
+  "error": {
+    "code": "<string>",
+    "message": "<string>",
+    "trace_id": "<string or omitted>"
+  }
+}
+```
+
+The `error.code` field maps to exit codes:
+
+| `error.code`  | Exit code | Condition |
+|---------------|-----------|-----------|
+| `usage_error` | 2         | Missing env var, unknown flag, or invalid argument |
+| `dns_failure` | 6         | DNS resolution failed |
+| `conn_refused`| 7         | Connection refused |
+| `http_error`  | 22        | Gateway returned 4xx/5xx |
+| `timeout`     | 28        | Request exceeded `CLAWCTL_TIMEOUT` |
+| `not_found`   | 1         | `verify`: commit/PR/issue/file not found |
+| `error`       | other     | Unclassified error |
+
+Trace-id is still written to stderr even when `--json` is set.
+Redaction is applied to `data` fields before output.
+
+### `data` shapes per command
+
+**`health`**: the raw JSON body returned by `GET /health`.
+
+```json
+{"command":"health","ok":true,"data":{"status":"ok"},"error":null}
+```
+
+**`models`**: the raw JSON body returned by `GET /v1/models`.
+
+```json
+{"command":"models","ok":true,"data":{"object":"list","data":[...]},"error":null}
+```
+
+**`msg`**: the core ToolResponse fields (no envelope metadata).
+
+```json
+{
+  "command": "msg",
+  "ok": true,
+  "data": {
+    "agent": "openclaw/concierge",
+    "content": "Hello! How can I help?",
+    "finish_reason": "stop",
+    "usage": {"input_tokens": 10, "output_tokens": 8, "total_tokens": 18},
+    "redactions": []
+  },
+  "error": null
+}
+```
+
+**`verify`**: the human-readable verification message.
+
+```json
+{"command":"verify","ok":true,"data":{"message":"verified: commit deadbeef"},"error":null}
+```
+
+**`trace`**: trace-id, Jaeger UI URL, and span count (when Jaeger is reachable).
+
+```json
+{
+  "command": "trace",
+  "ok": true,
+  "data": {
+    "trace_id": "abc123...",
+    "ui_url": "http://jaeger:16686/trace/abc123...",
+    "spans_count": 5
+  },
+  "error": null
+}
+```
+
 ### Scripting example
 
 ```bash
