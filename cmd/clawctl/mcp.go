@@ -14,8 +14,8 @@ import (
 	"github.com/tomstagl/clawctl/internal/mcpserver"
 )
 
-// runMCP implements `clawctl mcp`. It registers four command-based MCP tools
-// (clawctl_health, clawctl_models, clawctl_verify, clawctl_trace) without any
+// runMCP implements `clawctl mcp`. It registers five command-based MCP tools
+// (clawctl_health, clawctl_models, clawctl_verify, clawctl_trace, clawctl_msg) without any
 // startup network call, then serves them over an mcp.StdioTransport so any
 // stdio MCP client can register clawctl with:
 //
@@ -50,7 +50,7 @@ func runMCP(ctx context.Context, cfg config.Config, args []string, stdin io.Read
 		return 1
 	}
 
-	fmt.Fprintf(stderr, "clawctl mcp: registered 4 command tools; waiting for MCP client on stdio\n")
+	fmt.Fprintf(stderr, "clawctl mcp: registered 5 command tools; waiting for MCP client on stdio\n")
 	if err := mcpRun(ctx, srv, stdin, stdout); err != nil {
 		// io.EOF on stdin is the normal shutdown signal when the parent
 		// MCP client closes; treat it as a clean exit.

@@ -28,14 +28,14 @@ func TestBuildCommandServer_ToolsList(t *testing.T) {
 		t.Fatalf("BuildCommandServer: %v", err)
 	}
 	tools := listTools(t, srv)
-	if len(tools) != 4 {
-		t.Fatalf("len(tools) = %d, want 4", len(tools))
+	if len(tools) != 5 {
+		t.Fatalf("len(tools) = %d, want 5", len(tools))
 	}
 	byName := map[string]bool{}
 	for _, tool := range tools {
 		byName[tool.Name] = true
 	}
-	for _, want := range []string{"clawctl_health", "clawctl_models", "clawctl_verify", "clawctl_trace"} {
+	for _, want := range []string{"clawctl_health", "clawctl_models", "clawctl_verify", "clawctl_trace", "clawctl_msg"} {
 		if !byName[want] {
 			t.Errorf("missing tool %q; got %v", want, byName)
 		}
@@ -312,6 +312,131 @@ func TestCommandServer_Trace_NoJaeger(t *testing.T) {
 	}
 	if data.SpansCount != nil {
 		t.Errorf("spans_count = %v, want nil when jaegerURL is empty", *data.SpansCount)
+	}
+}
+
+// --------- clawctl_msg ---------
+
+func TestCommandServer_Msg_HappyPath(t *testing.T) {
+	const wantToken = "tok-msg-test"
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/chat/completions" {
+			t.Errorf("unexpected path %q, want /v1/chat/completions", r.URL.Path)
+		}
+		if r.Method != http.MethodPost {
+			t.Errorf("method = %q, want POST", r.Method)
+		}
+		if got := r.Header.Get("Authorization"); got != "Bearer "+wantToken {
+			t.Errorf("Authorization = %q, want Bearer %s", got, wantToken)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"choices":[{"message":{"content":"hello from concierge"},"finish_reason":"stop"}],
+			"usage":{"prompt_tokens":10,"completion_tokens":4,"total_tokens":14}
+		}`))
+	}))
+	defer backend.Close()
+
+	srv, err := BuildCommandServer(nil, stubSrc(wantToken), backend.URL, "")
+	if err != nil {
+		t.Fatalf("BuildCommandServer: %v", err)
+	}
+	cs := connect(t, srv)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "clawctl_msg",
+		Arguments: map[string]any{"agent": "concierge", "text": "hello"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("IsError = true, want false; content: %v", res.Content)
+	}
+	tc := requireTextContent(t, res)
+
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(tc.Text), &envelope); err != nil {
+		t.Fatalf("unmarshal envelope: %v; text=%s", err, tc.Text)
+	}
+	if got := envelope["kind"]; got != "tool_response" {
+		t.Errorf("kind = %v, want tool_response", got)
+	}
+	if got := envelope["agent"]; got != "openclaw/concierge" {
+		t.Errorf("agent = %v, want openclaw/concierge", got)
+	}
+	if got := envelope["output"]; got != "hello from concierge" {
+		t.Errorf("output = %v, want 'hello from concierge'", got)
+	}
+	if got := envelope["finish_reason"]; got != "stop" {
+		t.Errorf("finish_reason = %v, want stop", got)
+	}
+	usage, ok := envelope["usage"].(map[string]any)
+	if !ok {
+		t.Fatalf("usage field missing or wrong type: %T", envelope["usage"])
+	}
+	if got := usage["input_tokens"]; got != float64(10) {
+		t.Errorf("usage.input_tokens = %v, want 10", got)
+	}
+}
+
+func TestCommandServer_Msg_Error(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"unauthorized"}`))
+	}))
+	defer backend.Close()
+
+	srv, err := BuildCommandServer(nil, stubSrc("bad-tok"), backend.URL, "")
+	if err != nil {
+		t.Fatalf("BuildCommandServer: %v", err)
+	}
+	cs := connect(t, srv)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "clawctl_msg",
+		Arguments: map[string]any{"agent": "concierge", "text": "hello"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if !res.IsError {
+		t.Errorf("IsError = false, want true for 401 response")
+	}
+	tc := requireTextContent(t, res)
+	if !strings.Contains(tc.Text, "clawctl_msg") {
+		t.Errorf("error result = %q, want tool name prefix", tc.Text)
+	}
+}
+
+func TestCommandServer_Msg_Redaction(t *testing.T) {
+	const secretToken = "dt0c01.SECRETSECRET.verylongsecretvalue1234567890abcdef"
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		resp := `{"choices":[{"message":{"content":"token is ` + secretToken + `"},"finish_reason":"stop"}],"usage":{}}`
+		_, _ = w.Write([]byte(resp))
+	}))
+	defer backend.Close()
+
+	srv, err := BuildCommandServer(nil, stubSrc("tok"), backend.URL, "")
+	if err != nil {
+		t.Fatalf("BuildCommandServer: %v", err)
+	}
+	cs := connect(t, srv)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "clawctl_msg",
+		Arguments: map[string]any{"agent": "concierge", "text": "what is the token?"},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if res.IsError {
+		t.Fatalf("IsError = true, want false; content: %v", res.Content)
+	}
+	tc := requireTextContent(t, res)
+	if strings.Contains(tc.Text, secretToken) {
+		t.Errorf("secret token not redacted in output: %s", tc.Text)
+	}
+	if !strings.Contains(tc.Text, "REDACTED") {
+		t.Errorf("output should contain REDACTED marker; got: %s", tc.Text)
 	}
 }
 

@@ -50,3 +50,10 @@ Status: done
 Files changed: internal/mcpserver/commands.go (new), internal/mcpserver/commands_test.go (new), cmd/clawctl/mcp.go (rewritten), cmd/clawctl/mcp_test.go (updated), cmd/clawctl/mcp_call_test.go (removed unused imports + deleted integration test), cmd/clawctl/mcp_stream_test.go (skipped two integration tests), prd.json
 Notes: BuildCommandServer takes (impl, src, baseURL, jaegerURL) — jaegerURL added over the AC spec since trace requires it. Integration tests for agent-based runMCP path are skipped with explanation; handler-level tests remain. The Build/Agent path stays in server.go for US-008 future use.
 ---
+
+## US-008: Add clawctl_msg tool to MCP server
+Iteration: 2026-05-10T23:30:00Z
+Status: done
+Files changed: internal/mcpserver/commands.go (clawctl_msg tool + handler + helpers), internal/mcpserver/commands_test.go (5-tool list + 3 msg tests), cmd/clawctl/mcp.go (count 4→5 in log + comment), cmd/clawctl/mcp_test.go (updated counts + tool names), docs/mcp.md (worked example rewritten for command server + clawctl_msg snippet), prd.json
+Notes: Redaction applied via redact.Apply with empty GwToken (no keychain access in MCP handler context); envelope.ToolResponse used directly but without schema validation since traceparent is empty; finish_reason mapping duplicated from msg.go since it is in package main.
+---

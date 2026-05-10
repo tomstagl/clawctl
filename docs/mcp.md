@@ -64,60 +64,49 @@ Claude Code's MCP subprocess inherits `$USER` and the Keychain ACL from your she
 
 ## Worked example
 
-Assume the gateway publishes two agents:
+### Registration
 
-```json
-{
-  "data": [
-    { "id": "openclaw/concierge", "description": "Routes requests to the right specialist agent.", "owned_by": "openclaw" },
-    { "id": "openclaw/ops",       "description": "Operates the fleet: cron, sessions, skills.",  "owned_by": "openclaw" }
-  ]
-}
+Run this once. Claude Code will spawn `clawctl mcp` as a subprocess on every session that needs the tools:
+
+```bash
+claude mcp add clawctl --command clawctl --args mcp
 ```
+
+Verify it registered:
+
+```text
+/mcp
+```
+
+You should see `clawctl` listed with five tools.
 
 ### `tools/list` output
 
-When Claude Code calls `tools/list` on the registered `clawctl` server, it gets one MCP tool per agent. Tool names are the bare slug (the `openclaw/` prefix is stripped because some MCP clients reject `/` in tool identifiers); the description still cites the full slug so callers can route by full ID:
+`clawctl mcp` registers a fixed set of typed read-only command tools — no startup network call, no per-agent tool list:
 
 ```json
 {
   "tools": [
-    {
-      "name": "concierge",
-      "description": "Routes requests to the right specialist agent.",
-      "inputSchema": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["text"],
-        "properties": {
-          "text":        { "type": "string", "minLength": 1 },
-          "session_id":  { "type": "string", "minLength": 1, "maxLength": 128 },
-          "tool_choice": { "type": "string", "enum": ["auto", "none", "required"] },
-          "streaming":   { "type": "boolean", "default": false }
-        }
-      }
-    },
-    {
-      "name": "ops",
-      "description": "Operates the fleet: cron, sessions, skills.",
-      "inputSchema": { "...": "same shape as above" }
-    }
+    { "name": "clawctl_health",  "description": "Check the openclaw gateway health endpoint." },
+    { "name": "clawctl_models",  "description": "List available openclaw agent models from the gateway." },
+    { "name": "clawctl_verify",  "description": "Verify a git commit, GitHub PR/issue, or file path." },
+    { "name": "clawctl_trace",   "description": "Look up a W3C trace-id in Jaeger." },
+    { "name": "clawctl_msg",     "description": "Send a prompt to an openclaw agent and receive a ToolResponse envelope." }
   ]
 }
 ```
 
-The input schema mirrors `schemas/envelope.v1.json`'s `Input` shape one-to-one (`text`, optional `session_id`, optional `tool_choice`, optional `streaming`), so an LLM that already speaks the v1 envelope can call these tools without translating shapes.
+### `clawctl_msg` tool call
 
-### `tools/call` (non-streaming)
-
-A typical call from Claude Code looks like:
+Send a prompt to an openclaw agent from any MCP client:
 
 ```json
 {
   "method": "tools/call",
   "params": {
-    "name": "concierge",
+    "name": "clawctl_msg",
     "arguments": {
+      "agent": "concierge",
       "text": "summarise overnight openclaw runs",
       "session_id": "ops-2026-05-10"
     }
@@ -125,74 +114,36 @@ A typical call from Claude Code looks like:
 }
 ```
 
-The tool result is a v1 `ToolResponse` envelope, returned as both `content[0].text` (a JSON string for clients that parse text) and `structuredContent` (typed value for clients using strict typing). The traceparent is echoed in `_meta.clawctl.traceparent` so clients can correlate Jaeger spans without parsing the envelope:
+The tool result is a v1 `ToolResponse` envelope serialised as `content[0].text`. Redaction is applied before the response is returned — any secret patterns matched in the agent's output are replaced with `<REDACTED:kind:prefix…>` and listed in `redactions[]`:
 
 ```json
 {
-  "_meta": { "clawctl.traceparent": "00-a1f8e5fa3b2c1d0e9f8a7b6c5d4e3f2a-1234567890abcdef-01" },
   "content": [{
     "type": "text",
-    "text": "{\"envelope_version\":\"1\",\"kind\":\"tool_response\",\"agent\":\"openclaw/concierge\",\"traceparent\":\"00-a1f8e5fa3b2c1d0e9f8a7b6c5d4e3f2a-1234567890abcdef-01\",\"input\":{\"role\":\"user\",\"content\":\"summarise overnight openclaw runs\"},\"output\":\"3 runs completed; 1 surfaced a redacted secret (kind=dt0c01).\",\"redactions\":[],\"usage\":{\"prompt_tokens\":42,\"completion_tokens\":18,\"total_tokens\":60},\"finish_reason\":\"stop\"}"
-  }],
-  "structuredContent": {
-    "envelope_version": "1",
-    "kind": "tool_response",
-    "agent": "openclaw/concierge",
-    "traceparent": "00-a1f8e5fa3b2c1d0e9f8a7b6c5d4e3f2a-1234567890abcdef-01",
-    "input": { "role": "user", "content": "summarise overnight openclaw runs" },
-    "output": "3 runs completed; 1 surfaced a redacted secret (kind=dt0c01).",
-    "redactions": [],
-    "usage": { "prompt_tokens": 42, "completion_tokens": 18, "total_tokens": 60 },
-    "finish_reason": "stop"
-  }
+    "text": "{\"envelope_version\":\"1\",\"kind\":\"tool_response\",\"agent\":\"openclaw/concierge\",\"input\":{\"role\":\"user\",\"content\":\"summarise overnight openclaw runs\"},\"output\":\"3 runs completed; 1 surfaced a redacted secret (kind=dt0c01).\",\"redactions\":[{\"kind\":\"dt0c01\",\"offset_hint\":52,\"count\":1}],\"usage\":{\"input_tokens\":42,\"output_tokens\":18,\"total_tokens\":60},\"finish_reason\":\"stop\"}"
+  }]
 }
 ```
 
-Cite the `traceparent` when reporting issues — that's the load-bearing identifier for the call across the gateway and Jaeger.
+Optional inputs for `clawctl_msg`:
 
-### `tools/call` (streaming)
-
-Set `streaming: true` and supply a `progressToken` on the request to receive each `ToolStreamChunk` as an MCP `notifications/progress` message; the final `ToolResponse` is still returned as the tool result.
-
-```json
-{
-  "method": "tools/call",
-  "params": {
-    "name": "ops",
-    "arguments": { "text": "tail the fleet status", "streaming": true },
-    "_meta": { "progressToken": "stream-1" }
-  }
-}
-```
-
-Each progress notification carries the chunk envelope under `_meta.clawctl.stream_chunk` (raw JSON so the client can validate against `schemas/envelope.v1.json` without an extra round-trip) and a 0-based `_meta.clawctl.stream_sequence` so consumers that only inspect `_meta` still see the ordering.
-
-If a redaction pattern straddles two SSE chunks, `clawctl` coalesces into a single boundary-safe progress payload — emitting per-chunk in that case would either leak the unredacted bytes or split a redaction marker. This is the same trade-off `clawctl stream` makes; see `docs/transport-decisions.md`.
-
-If the client did not supply a `progressToken`, the streaming flag is honoured on the gateway side (the server still parses and validates chunks) but no progress notifications fire — per the MCP spec, servers MUST NOT send progress for requests that did not opt in.
+| Field | Type | Description |
+| --- | --- | --- |
+| `agent` | string (required) | openclaw agent slug, e.g. `concierge` |
+| `text` | string (required) | Prompt text to send |
+| `session_id` | string | Resumes a prior conversation by the same session key |
+| `tool_choice` | `auto` \| `none` \| `required` | Hints to the agent about sub-tool routing |
 
 ### Errors
 
-Failures land in-band as a v1 `ToolError` envelope with `IsError=true`, so the LLM sees a structured failure on the content channel rather than an opaque transport reject. The `code` field follows the schema enum, and `exit_code` carries the `clawctl` exit code that a re-shelled `clawctl msg` would have produced:
+On transport or gateway failure the tool result has `isError: true` and the text content names the error:
 
 ```json
 {
   "isError": true,
-  "_meta": { "clawctl.traceparent": "00-…-01" },
-  "structuredContent": {
-    "envelope_version": "1",
-    "kind": "tool_error",
-    "agent": "openclaw/concierge",
-    "traceparent": "00-…-01",
-    "code": "gateway.rate_limited",
-    "message": "gateway error: HTTP 429",
-    "http_status": 429,
-    "exit_code": 22
-  }
+  "content": [{ "type": "text", "text": "clawctl_msg: HTTP 401: unauthorized" }]
 }
 ```
-
-The mapping from transport failure to envelope code mirrors the curl-aligned exit-code contract in `clawctl help`: `transport.connection_refused` → 7, `transport.dns` → 6, `transport.timeout` → 28, `gateway.*` → 22.
 
 ## Troubleshooting
 

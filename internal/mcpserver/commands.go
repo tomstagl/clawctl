@@ -14,6 +14,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/tomstagl/clawctl/internal/envelope"
+	"github.com/tomstagl/clawctl/internal/redact"
 	"github.com/tomstagl/clawctl/internal/transport/api"
 )
 
@@ -33,6 +35,7 @@ func BuildCommandServer(impl *Implementation, src api.TokenSource, baseURL, jaeg
 	srv.AddTool(modelsTool(), modelsHandler(client))
 	srv.AddTool(verifyTool(), verifyHandler())
 	srv.AddTool(traceTool(), traceHandler(jaegerURL))
+	srv.AddTool(msgTool(), msgHandler(client))
 	return srv, nil
 }
 
@@ -313,6 +316,201 @@ func cmdSpanCount(body []byte) *int {
 	}
 	n := len(d.Data[0].Spans)
 	return &n
+}
+
+// --------- clawctl_msg ---------
+
+func msgTool() *mcp.Tool {
+	return &mcp.Tool{
+		Name:        "clawctl_msg",
+		Description: "Send a prompt to an openclaw agent and receive a ToolResponse envelope. Redaction is applied to the response before it is returned.",
+		InputSchema: map[string]any{
+			"type":                 "object",
+			"additionalProperties": false,
+			"required":             []any{"agent", "text"},
+			"properties": map[string]any{
+				"agent": map[string]any{
+					"type":        "string",
+					"minLength":   1,
+					"description": "openclaw agent slug (e.g. 'concierge').",
+				},
+				"text": map[string]any{
+					"type":        "string",
+					"minLength":   1,
+					"description": "User prompt text to send to the agent.",
+				},
+				"session_id": map[string]any{
+					"type":        "string",
+					"description": "Optional session key for conversation continuity.",
+				},
+				"tool_choice": map[string]any{
+					"type":        "string",
+					"enum":        []any{"auto", "none", "required"},
+					"description": "Optional hint about whether the agent should call sub-tools.",
+				},
+			},
+		},
+	}
+}
+
+type cmdMsgArgs struct {
+	Agent      string `json:"agent"`
+	Text       string `json:"text"`
+	SessionID  string `json:"session_id,omitempty"`
+	ToolChoice string `json:"tool_choice,omitempty"`
+}
+
+type cmdMsgChatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type cmdMsgChatPayload struct {
+	Model    string              `json:"model"`
+	Stream   bool                `json:"stream"`
+	User     string              `json:"user,omitempty"`
+	Messages []cmdMsgChatMessage `json:"messages"`
+}
+
+type cmdMsgChatUsage struct {
+	PromptTokens     *int `json:"prompt_tokens"`
+	CompletionTokens *int `json:"completion_tokens"`
+	TotalTokens      *int `json:"total_tokens"`
+}
+
+type cmdMsgChatParsed struct {
+	Content      string
+	FinishReason string
+	Usage        cmdMsgChatUsage
+}
+
+func cmdMsgBuildPayload(agent, text, session string) ([]byte, error) {
+	p := cmdMsgChatPayload{
+		Model:    "openclaw/" + agent,
+		Stream:   false,
+		User:     session,
+		Messages: []cmdMsgChatMessage{{Role: "user", Content: text}},
+	}
+	return json.Marshal(p)
+}
+
+func cmdMsgParseChatResponse(body []byte) (cmdMsgChatParsed, error) {
+	var raw struct {
+		Choices []struct {
+			Message struct {
+				Content string `json:"content"`
+			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
+		} `json:"choices"`
+		Usage cmdMsgChatUsage `json:"usage"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return cmdMsgChatParsed{}, err
+	}
+	r := cmdMsgChatParsed{Usage: raw.Usage}
+	if len(raw.Choices) > 0 {
+		r.Content = raw.Choices[0].Message.Content
+		r.FinishReason = raw.Choices[0].FinishReason
+	}
+	return r, nil
+}
+
+func cmdMsgMapFinishReason(raw string) string {
+	switch raw {
+	case "stop", "length", "content_filter", "error":
+		return raw
+	case "tool_calls", "function_call", "tool_call":
+		return "tool_call"
+	default:
+		return "stop"
+	}
+}
+
+func cmdMsgToEnvelopeUsage(u cmdMsgChatUsage) envelope.Usage {
+	out := envelope.Usage{}
+	if u.PromptTokens != nil {
+		out.InputTokens = *u.PromptTokens
+	}
+	if u.CompletionTokens != nil {
+		out.OutputTokens = *u.CompletionTokens
+	}
+	if u.TotalTokens != nil {
+		out.TotalTokens = *u.TotalTokens
+	}
+	return out
+}
+
+func cmdMsgToEnvelopeRedactions(hits []redact.Hit) []envelope.Redaction {
+	out := make([]envelope.Redaction, 0, len(hits))
+	for _, h := range hits {
+		off := h.OffsetHint
+		count := h.Count
+		out = append(out, envelope.Redaction{
+			Kind:       h.Kind,
+			OffsetHint: &off,
+			Count:      &count,
+		})
+	}
+	return out
+}
+
+func msgHandler(client *api.Client) mcp.ToolHandler {
+	return func(ctx context.Context, req *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var args cmdMsgArgs
+		if req.Params != nil && len(req.Params.Arguments) > 0 {
+			if err := json.Unmarshal(req.Params.Arguments, &args); err != nil {
+				return cmdErrResult("clawctl_msg", "invalid arguments: "+err.Error()), nil
+			}
+		}
+		if args.Agent == "" {
+			return cmdErrResult("clawctl_msg", "agent is required"), nil
+		}
+		if args.Text == "" {
+			return cmdErrResult("clawctl_msg", "text is required"), nil
+		}
+
+		payload, err := cmdMsgBuildPayload(args.Agent, args.Text, args.SessionID)
+		if err != nil {
+			return cmdErrResult("clawctl_msg", "build payload: "+err.Error()), nil
+		}
+
+		body, err := client.Do(ctx, api.Request{
+			Method:  http.MethodPost,
+			Path:    "/v1/chat/completions",
+			Body:    payload,
+			Authed:  true,
+			Retry:   false,
+			Headers: []string{"Content-Type: application/json"},
+		})
+		if err != nil {
+			return cmdErrResult("clawctl_msg", err.Error()), nil
+		}
+
+		parsed, err := cmdMsgParseChatResponse(body)
+		if err != nil {
+			return cmdErrResult("clawctl_msg", "parse response: "+err.Error()), nil
+		}
+
+		r := redact.Apply(parsed.Content, redact.Options{})
+
+		resp := envelope.ToolResponse{
+			EnvelopeVersion: envelope.Version,
+			Kind:            envelope.KindToolResponse,
+			Agent:           "openclaw/" + args.Agent,
+			SessionID:       args.SessionID,
+			Input:           envelope.Input{Role: "user", Content: args.Text},
+			Output:          r.Text,
+			Redactions:      cmdMsgToEnvelopeRedactions(r.Hits),
+			Usage:           cmdMsgToEnvelopeUsage(parsed.Usage),
+			FinishReason:    cmdMsgMapFinishReason(parsed.FinishReason),
+		}
+
+		enc, err := json.Marshal(resp)
+		if err != nil {
+			return cmdErrResult("clawctl_msg", "marshal response: "+err.Error()), nil
+		}
+		return cmdOKResult(enc), nil
+	}
 }
 
 // --------- shared result helpers ---------

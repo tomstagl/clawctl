@@ -63,7 +63,7 @@ func TestRunMCP_RejectsExtraArgs(t *testing.T) {
 }
 
 // TestRunMCP_ToolsListReturnsFourCommandTools verifies that the command-based
-// MCP server registers exactly the four read-only command tools and that
+// MCP server registers exactly the five read-only command tools and that
 // tools/list returns them without any startup network call.
 func TestRunMCP_ToolsListReturnsFourCommandTools(t *testing.T) {
 	withStubTokenSource(t, "tok")
@@ -102,21 +102,21 @@ func TestRunMCP_ToolsListReturnsFourCommandTools(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListTools: %v", err)
 	}
-	if len(res.Tools) != 4 {
-		t.Fatalf("len(tools) = %d, want 4\ntools=%v\nstderr=%s", len(res.Tools), res.Tools, stderr.String())
+	if len(res.Tools) != 5 {
+		t.Fatalf("len(tools) = %d, want 5\ntools=%v\nstderr=%s", len(res.Tools), res.Tools, stderr.String())
 	}
 	names := map[string]bool{}
 	for _, tool := range res.Tools {
 		names[tool.Name] = true
 	}
-	for _, want := range []string{"clawctl_health", "clawctl_models", "clawctl_verify", "clawctl_trace"} {
+	for _, want := range []string{"clawctl_health", "clawctl_models", "clawctl_verify", "clawctl_trace", "clawctl_msg"} {
 		if !names[want] {
 			t.Errorf("tools/list missing %q; got %v", want, names)
 		}
 	}
 
-	if !strings.Contains(stderr.String(), "registered 4 command tools") {
-		t.Errorf("stderr = %q, want 'registered 4 command tools' marker", stderr.String())
+	if !strings.Contains(stderr.String(), "registered 5 command tools") {
+		t.Errorf("stderr = %q, want 'registered 5 command tools' marker", stderr.String())
 	}
 
 	_ = cs.Close()
@@ -133,7 +133,7 @@ func TestRunMCP_ToolsListReturnsFourCommandTools(t *testing.T) {
 
 // TestMCPEndToEnd_SpawnAndListTools is the subprocess flavour: spawn
 // `clawctl mcp` as a child process, send tools/list over the MCP
-// CommandTransport, and assert the four command tools are returned.
+// CommandTransport, and assert the five command tools are returned.
 //
 // The binary is built fresh each test run via `go build` into the test's
 // TempDir so we don't depend on a checked-in artifact.
@@ -190,14 +190,14 @@ esac
 	if err != nil {
 		t.Fatalf("ListTools: %v\nstderr=%s", err, serr.String())
 	}
-	if len(res.Tools) != 4 {
-		t.Fatalf("len(tools) = %d, want 4\nstderr=%s", len(res.Tools), serr.String())
+	if len(res.Tools) != 5 {
+		t.Fatalf("len(tools) = %d, want 5\nstderr=%s", len(res.Tools), serr.String())
 	}
 	names := map[string]string{}
 	for _, tool := range res.Tools {
 		names[tool.Name] = tool.Description
 	}
-	for _, want := range []string{"clawctl_health", "clawctl_models", "clawctl_verify", "clawctl_trace"} {
+	for _, want := range []string{"clawctl_health", "clawctl_models", "clawctl_verify", "clawctl_trace", "clawctl_msg"} {
 		if _, ok := names[want]; !ok {
 			t.Errorf("tools/list missing %q; got %v", want, names)
 		}
