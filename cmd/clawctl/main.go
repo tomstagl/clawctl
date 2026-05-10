@@ -50,6 +50,8 @@ func main() {
 		verifyCmd(cfg, args[1:])
 	case "trace":
 		traceCmd(cfg, args[1:])
+	case "mcp":
+		mcpCmd(cfg, args[1:])
 	case "_redact":
 		// Hidden parity-test surface (mirrors the bash dispatcher's
 		// `_redact)` branch). Not advertised in help.
@@ -84,6 +86,8 @@ func printHelp(w io.Writer, cfg config.Config) {
   clawctl cli SUBCOMMAND...                   run `+"`openclaw …`"+` over SSH on host
   clawctl verify KIND ARGS                    R-2 claim verification (see 'clawctl verify help')
   clawctl trace TRACE-ID                      lookup hint for a trace id
+  clawctl mcp                                 stdio MCP server: one tool per agent
+                                              register with: claude mcp add clawctl --command clawctl --args mcp
 
 Required env:
   CLAWCTL_HOST              gateway URL (e.g. http://your-openclaw-host:18789)

@@ -386,3 +386,49 @@ Status: done
 Files changed: internal/logging/logging.go, internal/logging/logging_test.go, cmd/clawctl/{health,models,msg,stream,raw,cli,verify,trace,redact}.go, cmd/clawctl/health_test.go, prd.json
 Notes: New internal/logging package emits one JSON record on Finish in CLAWCTL_LOG=json mode; wired via named-return + defer in every run* so existing return paths stay untouched. Human mode pass-through is the unchanged default. Log-value redaction routes through internal/redact with the same gw_token wiring as response output.
 ---
+
+## US-025: Scaffold MCP stdio server (`clawctl mcp`) with tools/list
+Iteration: 2026-05-10T08:36:21Z
+Status: done
+Files changed: cmd/clawctl/{main.go,main_test.go,mcp.go,mcp_test.go} (new mcp.go, mcp_test.go), internal/mcpserver/{server.go,server_test.go} (new pkg), go.mod, go.sum, .github/workflows/ci.yml, prd.json
+Notes: New `clawctl mcp` subcommand wires the MCP Go SDK
+(github.com/modelcontextprotocol/go-sdk v1.3.1) onto an mcp.StdioTransport.
+On startup it reuses the existing internal/cache + internal/transport/api
+client to fetch /v1/models (60s file cache stays parity with bash
+_models_cache → no second cache key for the MCP path), runs the response
+through internal/mcpserver.ParseModels which strips the `openclaw/`
+prefix, drops non-`openclaw/*` entries, and sorts deterministically, then
+calls mcpserver.Build to register one *mcp.Tool per agent slug. Tool input
+schema mirrors the v1 envelope's input (text + optional session_id +
+optional tool_choice with the same enum) so an LLM that already speaks the
+envelope can call tools without translating shapes. The tools/call handler
+is a stub that returns a typed `IsError=true` content with marker
+"tool_call_not_implemented" so US-026 can land the chat path without
+re-shaping the bootstrap; a CallHandler seam (`func(ctx, Agent, *CallToolRequest)`)
+is exported for that purpose. Five protected behaviours covered by unit
+tests in internal/mcpserver: ParseModels strip+sort+skip, description
+fallback, schema shape (required/enum), Build routes to the supplied
+handler, Build rejects empty-slug. cmd/clawctl/mcp_test.go covers the
+typed-binary side: missing-host (exit 2), unexpected-arg (exit 2),
+no-agents (exit 1 with mcpserver.ErrNoAgents marker), connection-refused
+mapping (exit 7), in-process tools/list with at-least-one tool, and the
+US-025 acceptance criterion verbatim — TestMCPEndToEnd_SpawnAndListTools
+spawns the freshly-built `clawctl` as a subprocess against a httptest
+mock /v1/models, plumbs auth via a fake `security` PATH shim, opens a
+CommandTransport-backed MCP client, and asserts ListTools returns both
+fixture agents with the gateway-supplied description. `mcpRun` is split
+out as an overridable function variable so the in-process test swaps
+mcp.NewInMemoryTransports for stdio without touching production wiring.
+Trip hazards: (a) `clawctl mcp` deliberately does NOT emit a JSON log
+line on stdout in CLAWCTL_LOG=json mode because the MCP framing owns
+stdout — the existing logging.Logger.Stderr() pipeline handles
+stderr-only diagnostics correctly. (b) Tool names are the bare slug
+(after stripping `openclaw/`) because some MCP clients reject `/` in
+tool identifiers; descriptions still cite the full openclaw/<slug> form
+so callers can route by full ID. (c) MCP SDK v1.3.1 requires Go 1.23
+and its transitive oauth2 v0.35.0 requires Go 1.24 — bumped go.mod's
+toolchain directive to 1.24.0 and updated CI from 1.22 → 1.24 (fits
+US-011's "Go 1.22+ toolchain" criterion). go vet ./... clean,
+CGO_ENABLED=0 go test ./... clean across all 12 packages, bash -n +
+shellcheck (clawctl, install/install.sh, install/ssh-setup.sh) all clean.
+---

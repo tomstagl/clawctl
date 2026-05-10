@@ -22,6 +22,7 @@ func TestPrintHelpStructure(t *testing.T) {
 		"clawctl cli",
 		"clawctl verify",
 		"clawctl trace",
+		"clawctl mcp",
 		"CLAWCTL_HOST",
 		"CLAWCTL_SSH_HOST",
 		"CLAWCTL_JAEGER_UI",
