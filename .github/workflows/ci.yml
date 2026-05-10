@@ -228,6 +228,13 @@ jobs:
           [ "${{ steps.hardening_go.outcome }}" = "failure" ] && failed=1
           exit $failed
 
+  plugin:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: plugin-manifest.sh
+        run: bash test/plugin-manifest.sh
+
   go:
     runs-on: ubuntu-latest
     env:
