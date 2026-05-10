@@ -521,3 +521,36 @@ with the concatenated output. go vet ./... clean; go test ./... clean
 across all 12 packages; bash -n + shellcheck on the bash entrypoint
 clean.
 ---
+
+## US-028: Document `claude mcp add` registration in docs/mcp.md
+Iteration: 2026-05-10T11:30:00Z
+Status: done
+Files changed: docs/mcp.md (new), README.md, prd.json
+Notes: New docs/mcp.md is the one-step registration guide. Leads with the
+verbatim `claude mcp add clawctl --command clawctl --args mcp` invocation
+(the AC's named requirement), then a Required-environment table that
+calls out CLAWCTL_HOST as required + the keychain item name
+(openclaw-gateway-token, default of CLAWCTL_KEYCHAIN_SERVICE) + optional
+CLAWCTL_LOG=json. Worked example uses two fixture agents (concierge, ops)
+and shows tools/list response shape with input schema mirroring
+schemas/envelope.v1.json, then both non-streaming and streaming
+tools/call snippets. Streaming section covers the
+progressToken-required-or-no-notifications rule + boundary-coalesce
+trade-off + the _meta.clawctl.{traceparent,stream_chunk,stream_sequence}
+keys the typed binary actually emits (kept in sync with cmd/clawctl/mcp_call.go's
+const block — if those keys ever rename the doc and the consts must
+move together). Errors section shows a ToolError envelope with code +
+http_status + exit_code so callers see the curl-aligned mapping
+(transport.connection_refused→7, transport.dns→6, transport.timeout→28,
+gateway.*→22) explicitly. README.md "Use with Claude Code" section
+restructured to two-bullet "MCP server / slash-command plugin" with
+docs/mcp.md as the first bullet's named link (satisfies "Linked from
+README.md"). Linted via markdownlint-cli2 v0.13.0 with the same config
+as docs/envelope.md / docs/typed-binary-language.md (default rules,
+MD013/MD041 off, MD024 siblings_only) — docs/mcp.md returns 0 errors.
+Pre-existing MD040 in README.md (unlanguaged "/plugin marketplace add"
+fence at line 169 before my edit) is out of scope for US-028 and was
+present before this PR; flagging here so it doesn't get blamed on the
+mcp doc. shellcheck (severity=warning) on clawctl + install scripts
+clean; go vet ./... clean; bash -n on the same trio clean.
+---

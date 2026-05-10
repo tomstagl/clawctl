@@ -164,7 +164,10 @@ A full openclaw CLI reference lives at [`docs/cli-reference.md`](docs/cli-refere
 
 ## Use with Claude Code
 
-This repo doubles as a Claude Code plugin. Once `clawctl` is on PATH, install the plugin from the same repo:
+This repo doubles as a Claude Code plugin and an MCP server. Once `clawctl` is on PATH, you have two integrations to choose from (or use both):
+
+- **MCP server** — register `clawctl mcp` and Claude Code (or any MCP client) can call openclaw agents as typed tools. One tool per agent in `/v1/models`, traced and redacted at the boundary. See [`docs/mcp.md`](docs/mcp.md) for the one-line `claude mcp add` invocation, env requirements, and a worked `tools/list` + `tools/call` example.
+- **Slash-command plugin** — install from the same repo:
 
 ```
 /plugin marketplace add tomstagl/clawctl
