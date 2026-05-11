@@ -50,3 +50,21 @@ Status: done
 Files changed: .github/workflows/ci.yml, prd.json
 Notes: Added 'sudo apt-get install -y libsecret-tools pass' step to the go CI job; Linux keychain tests already use stub scripts so no real D-Bus session is needed. Existing tests (TestPlatformTokenCmdLinux, TestPlatformTokenAllBackendsFail, TestPlatformTokenSecretTool, TestPlatformTokenPassFallback) all pass via PATH manipulation and stub binaries. TestTokenMissingItemReturnsErrNotFound has explicit t.Skip with reason, satisfying the no-silent-skips AC. go test ./... clean.
 ---
+## US-009: Plugin manifest and directory convention test
+Iteration: 2026-05-10T23:00:00Z
+Status: done
+Files changed: test/plugin-manifest.sh, .github/workflows/ci.yml, prd.json
+Notes: Script validates both plugin JSONs, all 5 required metadata keys, version format, file-header convention for all commands/*.md and skills/*/SKILL.md, and marketplace.json path references (14 checks, all pass). Added 'plugin' CI job to ci.yml as a single step (no continue-on-error needed — single script). actionlint clean.
+---
+## US-010: Plugin command contract test
+Iteration: 2026-05-10T23:30:00Z
+Status: done
+Files changed: test/plugin-commands.sh, .github/workflows/ci.yml, prd.json
+Notes: Checks for "not yet implemented in the typed binary" on stderr (the exact message from main.go default: branch) rather than exit code alone, because several known subcommands (verify, cli) also exit 2 for usage/missing-env reasons. Avoided declare -A (bash 3.2 compat). Extracted 6 unique subcommands from fenced blocks; all pass. Plugin CI job updated with Go setup + build step.
+---
+## US-011: Skill contract test for openclaw-loopback
+Iteration: 2026-05-11T00:00:00Z
+Status: done
+Files changed: skills/openclaw-loopback/SKILL.md, test/skill-loopback.sh, .github/workflows/ci.yml, prd.json
+Notes: Added missing R-3..R-7 and R-10 rules to SKILL.md to satisfy the R-1..R-12 completeness requirement. Script validates 14 checks: 12 rule headings, key presence in YAML header (with graceful fallback when pyyaml/yq unavailable), and label definition locality. CI plugin job updated with python3-yaml install step.
+---

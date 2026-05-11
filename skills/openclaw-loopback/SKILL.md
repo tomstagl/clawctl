@@ -77,6 +77,26 @@ Every claim an agent makes in an issue/PR must be paired with a verifiable citat
 
 Exit `0` on a successful citation, `1` if the citation does not resolve, `2` on usage errors.
 
+### R-3 — Prompt includes BLOCKED failsafe
+
+Every agent prompt must contain a branch that opens a `BLOCKED` issue (with the full YAML deliverable header) when the main task cannot complete. A prompt that can exit silently — without a GitHub artifact — violates both R-3 and R-8.
+
+### R-4 — Run-id is a UUID
+
+The `run-id` value in the YAML deliverable header must be a valid UUID (version 4 recommended). Values that are not UUID-shaped (e.g. integers, empty strings, or arbitrary slugs) cause downstream deduplication tooling to fail silently.
+
+### R-5 — Timestamps are UTC
+
+`started` and `ended` timestamps in the YAML header must be ISO 8601 with explicit UTC offset (`Z` or `+00:00`). Local-time strings and timestamps without an offset are forbidden and will produce incorrect duration calculations downstream.
+
+### R-6 — Status values are canonical
+
+`status` must be exactly one of `DONE`, `PARTIAL`, or `BLOCKED`. Variants such as `SUCCESS`, `ERROR`, `done` (lowercase), or any other value are not accepted by downstream tooling and will cause parsing failures at the consumer.
+
+### R-7 — No per-run labels
+
+Per-run-id labels are forbidden. The `run-id` belongs in the issue/PR body as YAML frontmatter, not as a label. Agents must not call `gh label create <run-id>` or apply any label that encodes a single run's identity — this creates label-namespace pollution and defeats the `openclaw` / `openclaw:<slug>` discovery model.
+
 ### R-8 — No silent drops
 
 A run that produced no GitHub artifact is treated as a silent drop. Prompts must include a failsafe that opens a `BLOCKED` issue with the YAML header and an explanation. Counts as an R-8 violation if missing.
@@ -84,6 +104,10 @@ A run that produced no GitHub artifact is treated as a silent drop. Prompts must
 ### R-9 — Slug discipline
 
 Slugs are stable, lowercase, hyphen-separated (`dead-code-sweep`, never `DeadCodeSweep`). When an agent reports as "Agent N (Foo)", check the agent charter file (typically `docs/openclaw/agents.md` or equivalent), not memory of an earlier conversation.
+
+### R-10 — Scope declared before acting
+
+Before writing to a repo or dispatching a workflow, the agent must verify it holds the required GitHub auth scopes: `gh auth status` must confirm `repo` scope (issues, PRs, labels) and `workflow` scope for any agent that dispatches GitHub Actions. An agent that writes to an out-of-scope repo, or that assumes scopes without verifying, violates R-10.
 
 ### R-11 — Show paths, never values
 
