@@ -79,6 +79,45 @@ jobs:
           echo "$out"
           echo "$out" | grep -q clawctl
           "$CLAWCTL_INSTALL_DIR/clawctl" --help
+      - name: Health check (mock gateway)
+        if: steps.release-check.outputs.has_release == 'true'
+        env:
+          CLAWCTL_INSTALL_DIR: ${{ runner.temp }}/clawctl-install
+        run: |
+          PORT_FILE="$(mktemp)"
+          python3 -c "
+          import socketserver, http.server, sys
+          class H(http.server.BaseHTTPRequestHandler):
+            def do_GET(s):
+              b=b'{\"status\":\"ok\"}';s.send_response(200);s.send_header('Content-Type','application/json');s.send_header('Content-Length',str(len(b)));s.end_headers();s.wfile.write(b)
+            def log_message(*a): pass
+          srv=socketserver.TCPServer(('127.0.0.1',0),H)
+          open(sys.argv[1],'w').write(str(srv.server_address[1]))
+          srv.serve_forever()
+          " "$PORT_FILE" &
+          SRV=$!
+          for _ in {1..40}; do [ -s "$PORT_FILE" ] && break; sleep 0.05; done
+          if [ ! -s "$PORT_FILE" ]; then echo "mock health server did not start" >&2; kill "$SRV" 2>/dev/null || true; exit 1; fi
+          PORT="$(cat "$PORT_FILE")"
+          out="$(CLAWCTL_HOST="http://127.0.0.1:$PORT" CLAWCTL_TIMEOUT=5 "$CLAWCTL_INSTALL_DIR/clawctl" health)"
+          echo "$out"
+          echo "$out" | python3 -c "import sys,json; d=json.load(sys.stdin); assert d.get('status')=='ok','status not ok'"
+          kill "$SRV" 2>/dev/null || true
+      - name: Redact round-trip (dt0c01 leak)
+        if: steps.release-check.outputs.has_release == 'true'
+        env:
+          CLAWCTL_INSTALL_DIR: ${{ runner.temp }}/clawctl-install
+        run: |
+          LEAK="dt0c01.ABCDEFGHIJKLMNOPQRST"
+          result=$(printf 'the secret is %s and other text' "$LEAK" | "$CLAWCTL_INSTALL_DIR/clawctl" _redact test 2>/dev/null)
+          if echo "$result" | grep -qF "$LEAK"; then
+            echo "FAIL: dt0c01 token value leaked verbatim in _redact output" >&2
+            exit 1
+          fi
+          echo "ok: dt0c01 token redacted from stdout"
+      - name: Plugin manifest check
+        if: steps.release-check.outputs.has_release == 'true'
+        run: bash test/plugin-manifest.sh
 
   parity:
     runs-on: ubuntu-latest
