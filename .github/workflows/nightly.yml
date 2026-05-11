@@ -35,6 +35,13 @@ jobs:
           CLAWCTL_TOKEN_CMD: "echo $CLAWCTL_GATEWAY_TOKEN"
           BIN: ${{ runner.temp }}/clawctl-go
         run: bash test/smoke.sh
+      - name: Run smoke-parity.sh
+        env:
+          CLAWCTL_HOST: ${{ inputs.gateway_host || secrets.CLAWCTL_HOST }}
+          CLAWCTL_GATEWAY_TOKEN: ${{ secrets.CLAWCTL_GATEWAY_TOKEN }}
+          CLAWCTL_TOKEN_CMD: "echo $CLAWCTL_GATEWAY_TOKEN"
+          BIN: ${{ runner.temp }}/clawctl-go
+        run: bash test/smoke-parity.sh
       - name: Ensure nightly-smoke-failure label exists
         if: failure()
         env:

@@ -68,3 +68,15 @@ Status: done
 Files changed: skills/openclaw-loopback/SKILL.md, test/skill-loopback.sh, .github/workflows/ci.yml, prd.json
 Notes: Added missing R-3..R-7 and R-10 rules to SKILL.md to satisfy the R-1..R-12 completeness requirement. Script validates 14 checks: 12 rule headings, key presence in YAML header (with graceful fallback when pyyaml/yq unavailable), and label definition locality. CI plugin job updated with python3-yaml install step.
 ---
+## US-012: Create nightly.yml workflow running smoke.sh against real gateway
+Iteration: 2026-05-11T00:30:00Z
+Status: done
+Files changed: .github/workflows/nightly.yml, prd.json
+Notes: CLAWCTL_TOKEN_CMD="echo $CLAWCTL_GATEWAY_TOKEN" passes the token secret to the Go binary's keychain layer on Linux without violating the no-env-token principle (CLAWCTL_TOKEN_CMD is the supported override). Label auto-created if missing; issue dedup via gh issue list --label. actionlint and go vet clean.
+---
+## US-013: Add Go-vs-bash parity smoke for live gateway
+Iteration: 2026-05-11T01:00:00Z
+Status: done
+Files changed: test/smoke-parity.sh, .github/workflows/nightly.yml, prd.json
+Notes: Auth-gated parity (health, models, raw GET /health) is skipped on Linux where security(1) is unavailable — bash binary can only authenticate via macOS Keychain. verify commands (commit HEAD, file README.md) run unconditionally since they need no gateway token. canon() uses sed -E to normalise 32-hex trace-ids, 16-hex span-ids, ISO timestamps, and duration values before diffing; differences surface as -want:/-got: blocks per subcommand. Script reuses the BIN env var from nightly.yml so no additional workflow changes are needed beyond adding the step. shellcheck, bash -n, actionlint all clean.
+---
