@@ -86,3 +86,19 @@ Status: done
 Files changed: .github/workflows/ci.yml, prd.json
 Notes: Used a python3 socketserver mock (not python3 -m http.server) to serve canned /health JSON on a random port; assertion uses grep -qF on the full LEAK token value, not just the kind prefix, because the redaction replacement tag <REDACTED:dt0c01:...> legitimately contains the string "dt0c01". actionlint clean; go vet and go test clean.
 ---
+## US-015: Gate release.yml build job on mocked-test jobs
+Iteration: 2026-05-11T08:30:00Z
+Status: done
+Files changed: .github/workflows/release.yml, prd.json
+Notes: Added single 'mocked-tests' job that consolidates all parity, envelope (bash+go), contract (bash+go), and plugin scripts into one ubuntu-latest job with continue-on-error per step and a final summary check; build job's needs: updated to [actionlint, test, mocked-tests]. actionlint passes cleanly; go vet and go test clean.
+---
+## US-016: Document the test landscape in test/README.md
+Iteration: 2026-05-11T09:00:00Z
+Status: done
+Files changed: test/README.md, CLAUDE.md, prd.json
+Notes: Created test/README.md with a script-by-script table (18 scripts) covering what each tests, CI job, deps, mocked vs live, and bash/Go capability. CLAUDE.md 'Common commands' paragraph replaced ad-hoc script list with a pointer to test/README.md.
+---
+
+## DONE
+All 16 stories pass as of 2026-05-11T09:00:00Z.
+---
