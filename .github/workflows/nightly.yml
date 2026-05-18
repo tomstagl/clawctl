@@ -1,0 +1,84 @@
+name: nightly
+
+on:
+  schedule:
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+    inputs:
+      gateway_host:
+        description: "Gateway host to target (overrides CLAWCTL_HOST secret)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Build Go binary
+        run: go build -o "$RUNNER_TEMP/clawctl-go" ./cmd/clawctl
+      - name: Run smoke.sh
+        env:
+          CLAWCTL_HOST: ${{ inputs.gateway_host || secrets.CLAWCTL_HOST }}
+          CLAWCTL_GATEWAY_TOKEN: ${{ secrets.CLAWCTL_GATEWAY_TOKEN }}
+          CLAWCTL_TOKEN_CMD: "echo $CLAWCTL_GATEWAY_TOKEN"
+          BIN: ${{ runner.temp }}/clawctl-go
+        run: bash test/smoke.sh
+      - name: Run smoke-parity.sh
+        env:
+          CLAWCTL_HOST: ${{ inputs.gateway_host || secrets.CLAWCTL_HOST }}
+          CLAWCTL_GATEWAY_TOKEN: ${{ secrets.CLAWCTL_GATEWAY_TOKEN }}
+          CLAWCTL_TOKEN_CMD: "echo $CLAWCTL_GATEWAY_TOKEN"
+          BIN: ${{ runner.temp }}/clawctl-go
+        run: bash test/smoke-parity.sh
+      - name: Ensure nightly-smoke-failure label exists
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label list --json name --jq '.[].name' \
+            | grep -q '^nightly-smoke-failure$' \
+            || gh label create nightly-smoke-failure \
+                 --description "Nightly smoke test failure" \
+                 --color "d93f0b"
+      - name: Report failure (open or comment on issue)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          existing=$(gh issue list \
+            --label nightly-smoke-failure --state open \
+            --json number --jq '.[0].number' 2>/dev/null || true)
+          run_url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          if [ -z "$existing" ]; then
+            gh issue create \
+              --title "Nightly smoke test failed ($(date -u +%Y-%m-%d))" \
+              --label nightly-smoke-failure \
+              --body "Nightly smoke test failed. See workflow run: ${run_url}"
+          else
+            gh issue comment "$existing" \
+              --body "Nightly smoke test failed again. See workflow run: ${run_url}"
+          fi
+      - name: Recover (comment and close issue on success)
+        if: success()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          existing=$(gh issue list \
+            --label nightly-smoke-failure --state open \
+            --json number --jq '.[0].number' 2>/dev/null || true)
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --body "recovered"
+            gh issue close "$existing"
+          fi

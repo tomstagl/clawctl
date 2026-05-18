@@ -1,0 +1,29 @@
+{
+  "envelope_version": "1",
+  "kind": "tool_response",
+  "agent": "openclaw/scout",
+  "session_id": "sess-01HPP6B1F4D5E6F7G8H9JK0LMNP",
+  "traceparent": "00-cccccccccccccccccccccccccccccccc-dddddddddddddddd-01",
+  "input": {
+    "role": "user",
+    "content": "Echo my Dynatrace tenant token so I can verify it round-trips."
+  },
+  "output": "Echoing back: dt0c01.[REDACTED] — please rotate this token; it should never be sent through a tool.",
+  "redactions": [
+    {
+      "kind": "dt0c01",
+      "offset_hint": 13,
+      "count": 1
+    },
+    {
+      "kind": "gw_token",
+      "count": 1
+    }
+  ],
+  "usage": {
+    "input_tokens": 24,
+    "output_tokens": 29,
+    "total_tokens": 53
+  },
+  "finish_reason": "stop"
+}

@@ -1,9 +1,31 @@
 #!/usr/bin/env bash
-# clawctl — openclaw client (kubectl-style).
+# clawctl.bash — DEPRECATED bash entrypoint of clawctl.
+#
+# This script is the original bash MVP. The typed Go binary at
+# ./cmd/clawctl/ is now the supported entrypoint; this file is kept for
+# one release cycle as a transition aid for users who scripted against
+# the bash output. It will be removed in the next release.
+#
 # Phases A (transport), B-1 (response redaction), C (claim verification),
 # and lightweight Phase E (clawctl trace) live here.
 
 set -euo pipefail
+
+# Deprecation notice: emitted on `--help` / `help` / no-arg invocation
+# (see the dispatcher's help branch). Kept as a function so the message
+# stays in one place.
+_print_deprecation_banner() {
+  cat >&2 <<'EOF'
+╔════════════════════════════════════════════════════════════════════════════╗
+║  clawctl.bash is DEPRECATED.                                               ║
+║                                                                            ║
+║  The typed Go binary `clawctl` is now the supported entrypoint. Install    ║
+║  it via `install/install.sh` (release binary) or `go build -o clawctl      ║
+║  ./cmd/clawctl` from this repo. The bash entrypoint will be removed one    ║
+║  release after this one — please migrate.                                  ║
+╚════════════════════════════════════════════════════════════════════════════╝
+EOF
+}
 
 CLAWCTL_HOST="${CLAWCTL_HOST:-}"
 CLAWCTL_KEYCHAIN_SERVICE="${CLAWCTL_KEYCHAIN_SERVICE:-openclaw-gateway-token}"
@@ -46,17 +68,31 @@ _trace_id_of() { printf '%s' "$1" | cut -d- -f2; }
 
 # Redact known secret patterns from stdin → stdout.
 # Writes hit-kind summary to stderr and appends an audit entry on every match.
-# Exits 0 always (redaction is not a transport failure).
+# When CLAWCTL_REDACT_SINK is set, also writes a JSON array of
+# {kind, offset_hint, count} entries (one per match, byte offset into the
+# pre-redaction input) to that path so envelope emitters can populate
+# redactions[] without re-parsing stderr. Exits 0 always (redaction is not a
+# transport failure).
 _redact() {
-  if [ "$CLAWCTL_NO_REDACT" = "1" ]; then cat; return 0; fi
+  if [ "$CLAWCTL_NO_REDACT" = "1" ]; then
+    # Honor sink even on bypass, so envelope emitters always see a valid JSON
+    # array rather than a missing file.
+    if [ -n "${CLAWCTL_REDACT_SINK:-}" ]; then
+      printf '[]' > "$CLAWCTL_REDACT_SINK"
+    fi
+    cat
+    return 0
+  fi
 
   local agent="${1:-?}"
   local gw_token=""
   gw_token="$(_token 2>/dev/null || true)"
 
   AGENT="$agent" GW_TOKEN="$gw_token" AUDIT="$CLAWCTL_CACHE_DIR/last-redaction" \
+  SINK="${CLAWCTL_REDACT_SINK:-}" \
   perl -e '
     my $text = do { local $/; <STDIN> };
+    my $orig = $text;
     my %pat = (
       dt0c01    => qr/dt0c01\.[A-Za-z0-9_.\-]{20,}/,
       dt0s16    => qr/dt0s16\.[A-Za-z0-9_.\-]{20,}/,
@@ -66,17 +102,48 @@ _redact() {
       brave     => qr/BSA[A-Za-z0-9_\-]{25,}/,
     );
     my %hits;
+    my @events; # one entry per match: {kind, offset_hint}
     for my $kind (sort keys %pat) {
       my $re = $pat{$kind};
+      # Scan the unmodified input for offsets; offsets stay stable because we
+      # never mutate $orig.
+      while ($orig =~ /$re/g) {
+        push @events, { kind => $kind, offset_hint => $-[0] + 0 };
+      }
+      # Then substitute against $text. Substitution shifts later offsets in
+      # $text, so we deliberately do NOT use $text positions for offset_hint.
       $hits{$kind}++ while $text =~ s/$re/"<REDACTED:$kind:".substr($&,0,11)."\xE2\x80\xA6>"/e;
     }
     # gateway-token literal (length-bounded)
     my $gw = $ENV{GW_TOKEN} // "";
     if (length($gw) >= 16) {
       my $q = quotemeta($gw);
+      while ($orig =~ /$q/g) {
+        push @events, { kind => "gw_token", offset_hint => $-[0] + 0 };
+      }
       $hits{gw_token}++ while $text =~ s/$q/"<REDACTED:gw_token:".substr($gw,0,6)."\xE2\x80\xA6>"/e;
     }
     print STDOUT $text;
+
+    my $sink = $ENV{SINK} // "";
+    if ($sink ne "") {
+      my @sorted = sort {
+        $a->{offset_hint} <=> $b->{offset_hint} || $a->{kind} cmp $b->{kind}
+      } @events;
+      my @parts;
+      for my $e (@sorted) {
+        push @parts, sprintf(
+          q({"kind":"%s","offset_hint":%d,"count":1}),
+          $e->{kind}, $e->{offset_hint},
+        );
+      }
+      my $json = "[" . join(",", @parts) . "]";
+      if (open(my $fh, ">", $sink)) {
+        print $fh $json;
+        close($fh);
+      }
+    }
+
     if (%hits) {
       my $ts = `date -u +%FT%TZ`; chomp $ts;
       my $kinds = join(",", sort keys %hits);
@@ -113,17 +180,25 @@ _models_cache() {
     age_sec=$(( $(date +%s) - $(stat -f %m "$cache" 2>/dev/null || echo 0) ))
   fi
   if [ "$age_sec" -gt "$CLAWCTL_MODELS_TTL" ]; then
-    if curl --silent --show-error --fail-with-body \
+    local curl_exit=0
+    set +e
+    curl --silent --show-error --fail-with-body \
         --max-time "$CLAWCTL_TIMEOUT" \
         --retry 2 --retry-connrefused --retry-delay 1 --retry-all-errors \
         -H "Authorization: Bearer $(_token)" \
         -H "Accept: application/json" \
         -o "$cache.tmp" \
-        "${CLAWCTL_HOST}/v1/models" >/dev/null 2>&1; then
+        "${CLAWCTL_HOST}/v1/models" >/dev/null 2>&1
+    curl_exit=$?
+    set -e
+    if [ "$curl_exit" -eq 0 ]; then
       mv "$cache.tmp" "$cache"
     else
       rm -f "$cache.tmp"
-      [ -f "$cache" ] || return 1
+      # Fall back to a stale cache if one exists; otherwise propagate the
+      # curl exit code so the documented contract (6/7/22/28) reaches the
+      # caller instead of a generic 1.
+      [ -f "$cache" ] || return "$curl_exit"
     fi
   fi
   cat "$cache"
@@ -154,11 +229,15 @@ _validate_agent() {
 }
 
 # Call /v1/chat/completions; returns body on stdout, prints trace-id + errors on stderr.
-# args: <agent> <stream:bool> <session_key_or_empty> <text>
+# args: <agent> <stream:bool> <session_key_or_empty> <text> [<traceparent>]
+# If traceparent is omitted, one is generated. Callers that need to bind the
+# generated trace-id into a structured envelope MUST pass their own.
 _chat() {
-  local agent="$1" stream="$2" session="$3" text="$4"
-  local tp body http_code curl_exit
-  tp="$(_traceparent)"
+  local agent="$1" stream="$2" session="$3" text="$4" tp="${5:-}"
+  local body http_code curl_exit
+  if [ -z "$tp" ]; then
+    tp="$(_traceparent)"
+  fi
   echo "trace-id: $(_trace_id_of "$tp")" >&2
 
   body="$(mktemp)"
@@ -235,11 +314,13 @@ case "$cmd" in
     [ "$cmd" = "stream" ] && is_stream=true
 
     session=""
+    envelope=false
     while [ "${1:-}" != "" ]; do
       case "$1" in
         -s|--session) session="${2:-}"; shift 2 ;;
         -s=*)         session="${1#*=}"; shift ;;
         --session=*)  session="${1#*=}"; shift ;;
+        --envelope)   envelope=true; shift ;;
         --)           shift; break ;;
         -*)
           echo "clawctl $cmd: unknown flag '$1'" >&2; exit 2 ;;
@@ -248,7 +329,7 @@ case "$cmd" in
     done
 
     if [ "${1:-}" = "" ]; then
-      echo "usage: clawctl $cmd [-s <session-key>] <agent> [<text>]   (text from stdin if omitted)" >&2
+      echo "usage: clawctl $cmd [-s <session-key>] [--envelope] <agent> [<text>]   (text from stdin if omitted)" >&2
       echo "       agent = 'default' or a specific agent slug" >&2
       exit 2
     fi
@@ -256,6 +337,229 @@ case "$cmd" in
     _validate_agent "$agent" || exit $?
 
     if [ "$#" -gt 0 ]; then text="$*"; else text="$(cat)"; fi
+
+    if [ "$envelope" = "true" ] && [ "$is_stream" = "false" ]; then
+      tp="$(_traceparent)"
+      body="$(mktemp)"
+      red_out="$(mktemp)"
+      red_sink="$(mktemp)"
+      trap 'rm -f "$body" "$red_out" "$red_sink"' EXIT
+      _chat "$agent" false "$session" "$text" "$tp" > "$body"
+
+      jq -r '.choices[0].message.content // ""' "$body" \
+        | CLAWCTL_REDACT_SINK="$red_sink" _redact "$agent" > "$red_out"
+
+      redactions_json="[]"
+      if [ -s "$red_sink" ]; then
+        redactions_json="$(cat "$red_sink")"
+      fi
+
+      finish_raw=$(jq -r '.choices[0].finish_reason // "stop"' "$body")
+      case "$finish_raw" in
+        stop|length|content_filter|error) finish="$finish_raw" ;;
+        tool_calls|function_call|tool_call) finish="tool_call" ;;
+        *) finish="stop" ;;
+      esac
+
+      in_tok=$(jq -r '.usage.prompt_tokens // empty' "$body")
+      out_tok=$(jq -r '.usage.completion_tokens // empty' "$body")
+      tot_tok=$(jq -r '.usage.total_tokens // empty' "$body")
+
+      jq -n \
+        --arg agent "openclaw/$agent" \
+        --arg tp "$tp" \
+        --arg session "$session" \
+        --arg input "$text" \
+        --rawfile output "$red_out" \
+        --argjson redactions "$redactions_json" \
+        --arg finish "$finish" \
+        --arg in_tok "$in_tok" \
+        --arg out_tok "$out_tok" \
+        --arg tot_tok "$tot_tok" \
+        '{
+           envelope_version: "1",
+           kind: "tool_response",
+           agent: $agent,
+           traceparent: $tp,
+           input: { role: "user", content: $input },
+           output: $output,
+           redactions: $redactions,
+           usage: ({}
+             | (if $in_tok  != "" then .input_tokens  = ($in_tok|tonumber)  else . end)
+             | (if $out_tok != "" then .output_tokens = ($out_tok|tonumber) else . end)
+             | (if $tot_tok != "" then .total_tokens  = ($tot_tok|tonumber) else . end)),
+           finish_reason: $finish
+         }
+         + (if $session != "" then {session_id: $session} else {} end)'
+      exit 0
+    fi
+
+    if [ "$envelope" = "true" ] && [ "$is_stream" = "true" ]; then
+      tp="$(_traceparent)"
+      raw="$(mktemp)"
+      contents="$(mktemp)"
+      per_chunk="$(mktemp)"
+      per_chunk_red="$(mktemp)"
+      meta="$(mktemp)"
+      agg_sink="$(mktemp)"
+      chunk_sink="$(mktemp)"
+      trap 'rm -f "$raw" "$contents" "$per_chunk" "$per_chunk_red" "$meta" "$agg_sink" "$chunk_sink"' EXIT
+
+      _chat "$agent" true "$session" "$text" "$tp" > "$raw" || exit $?
+
+      # Parse SSE buffer: emit one JSON-encoded {"c": "..."} per non-empty
+      # delta to $contents, plus a single {"finish":..., "usage":...} to $meta.
+      python3 - "$raw" "$contents" "$meta" <<'PY'
+import json, sys
+raw_path, contents_path, meta_path = sys.argv[1], sys.argv[2], sys.argv[3]
+finish = "stop"
+usage = {}
+err = None
+with open(contents_path, "w") as out, open(raw_path) as fh:
+    for line in fh:
+        line = line.rstrip("\n")
+        if line.startswith("event:") and "error" in line:
+            err = line
+            continue
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].lstrip()
+        if payload == "[DONE]":
+            break
+        try:
+            obj = json.loads(payload)
+        except Exception:
+            continue
+        if isinstance(obj.get("usage"), dict):
+            usage = obj["usage"]
+        choices = obj.get("choices") or []
+        if not choices:
+            if "error" in obj:
+                err = json.dumps(obj["error"])
+            continue
+        c0 = choices[0]
+        if c0.get("finish_reason"):
+            finish = c0["finish_reason"]
+        delta = c0.get("delta") or c0.get("message") or {}
+        content = delta.get("content") or ""
+        if content:
+            out.write(json.dumps({"c": content}) + "\n")
+with open(meta_path, "w") as fh:
+    json.dump({"finish": finish, "usage": usage, "err": err}, fh)
+PY
+
+      # Per-chunk redaction pass (boundary-detection + content for emission).
+      # stderr suppressed so the aggregate pass below remains the canonical
+      # WARNING source; audit-file dups are accepted. Per-chunk redactions[]
+      # is captured into $per_chunk_red, one JSON-array line per chunk, in the
+      # same order as $per_chunk so we can join them by line number.
+      : > "$per_chunk"
+      : > "$per_chunk_red"
+      agg=""
+      while IFS= read -r line; do
+        c=$(printf '%s' "$line" | jq -r '.c')
+        : > "$chunk_sink"
+        rc=$(printf '%s' "$c" \
+          | CLAWCTL_REDACT_SINK="$chunk_sink" _redact "$agent" 2>/dev/null)
+        printf '%s' "$rc" | jq -cRs '{c: .}' >> "$per_chunk"
+        if [ -s "$chunk_sink" ]; then
+          cat "$chunk_sink" >> "$per_chunk_red"
+        else
+          printf '[]' >> "$per_chunk_red"
+        fi
+        printf '\n' >> "$per_chunk_red"
+        agg+="$c"
+      done < "$contents"
+
+      # Aggregate redaction (canonical pass: stderr WARNING + audit log fire here).
+      agg_redacted=$(printf '%s' "$agg" \
+        | CLAWCTL_REDACT_SINK="$agg_sink" _redact "$agent")
+      agg_redactions_json="[]"
+      if [ -s "$agg_sink" ]; then
+        agg_redactions_json="$(cat "$agg_sink")"
+      fi
+
+      per_chunk_concat=$(jq -rs 'map(.c) | add // ""' "$per_chunk")
+
+      finish_raw=$(jq -r '.finish // "stop"' "$meta")
+      case "$finish_raw" in
+        stop|length|content_filter|error) finish="$finish_raw" ;;
+        tool_calls|function_call|tool_call) finish="tool_call" ;;
+        *) finish="stop" ;;
+      esac
+      in_tok=$(jq -r '.usage.prompt_tokens // empty' "$meta")
+      out_tok=$(jq -r '.usage.completion_tokens // empty' "$meta")
+      tot_tok=$(jq -r '.usage.total_tokens // empty' "$meta")
+
+      if [ "$per_chunk_concat" = "$agg_redacted" ]; then
+        # Boundary-safe: per-chunk redaction sums to the aggregate-redacted
+        # text, so no secret crossed an SSE chunk boundary. Emit per-chunk.
+        idx=0
+        # Read the per-chunk redactions sidecar in lockstep with $per_chunk.
+        # Bash 3.x has no good way to read two files in parallel without
+        # subshells, so we collect the redactions array first.
+        red_lines=()
+        while IFS= read -r r_line; do
+          red_lines+=("$r_line")
+        done < "$per_chunk_red"
+
+        while IFS= read -r line; do
+          content=$(printf '%s' "$line" | jq -r '.c')
+          chunk_red="${red_lines[$idx]:-[]}"
+          jq -nc \
+            --arg agent "openclaw/$agent" \
+            --arg tp "$tp" \
+            --arg session "$session" \
+            --arg content "$content" \
+            --argjson index "$idx" \
+            --argjson redactions "$chunk_red" \
+            '{envelope_version:"1", kind:"tool_stream_chunk",
+              agent:$agent, traceparent:$tp, index:$index,
+              delta:{content:$content}, redactions:$redactions, finish_reason:null}
+             + (if $session != "" then {session_id:$session} else {} end)'
+          idx=$((idx + 1))
+        done < "$per_chunk"
+      else
+        # A secret pattern spans chunk boundaries — coalesce into a single
+        # ToolStreamChunk carrying the boundary-safe redacted aggregate. The
+        # aggregate redactions[] is the truthful set when boundary-coalescing.
+        echo "warning: redacted secret pattern crossed SSE chunk boundary; coalesced into one chunk" >&2
+        jq -nc \
+          --arg agent "openclaw/$agent" \
+          --arg tp "$tp" \
+          --arg session "$session" \
+          --arg content "$agg_redacted" \
+          --argjson redactions "$agg_redactions_json" \
+          '{envelope_version:"1", kind:"tool_stream_chunk",
+            agent:$agent, traceparent:$tp, index:0,
+            delta:{content:$content}, redactions:$redactions, finish_reason:null}
+           + (if $session != "" then {session_id:$session} else {} end)'
+      fi
+
+      # Terminal ToolResponse with the aggregate-redacted output.
+      jq -nc \
+        --arg agent "openclaw/$agent" \
+        --arg tp "$tp" \
+        --arg session "$session" \
+        --arg input "$text" \
+        --arg output "$agg_redacted" \
+        --argjson redactions "$agg_redactions_json" \
+        --arg finish "$finish" \
+        --arg in_tok "$in_tok" \
+        --arg out_tok "$out_tok" \
+        --arg tot_tok "$tot_tok" \
+        '{envelope_version:"1", kind:"tool_response",
+          agent:$agent, traceparent:$tp,
+          input:{role:"user", content:$input},
+          output:$output, redactions:$redactions,
+          usage: ({}
+            | (if $in_tok  != "" then .input_tokens  = ($in_tok|tonumber)  else . end)
+            | (if $out_tok != "" then .output_tokens = ($out_tok|tonumber) else . end)
+            | (if $tot_tok != "" then .total_tokens  = ($tot_tok|tonumber) else . end)),
+          finish_reason: $finish}
+         + (if $session != "" then {session_id:$session} else {} end)'
+      exit 0
+    fi
 
     if [ "$is_stream" = "true" ]; then
       raw="$(mktemp)"
@@ -315,9 +619,11 @@ PY
     if [ "$method" = "GET" ]; then
       retry_args=(--retry 2 --retry-connrefused --retry-delay 1 --retry-all-errors)
     fi
+    # Bash 3.2 (macOS) errors on `"${arr[@]}"` when arr is empty under set -u;
+    # the ${arr[@]+...} guard expands to nothing if unset/empty.
     curl --silent --show-error --fail-with-body \
       --max-time "$CLAWCTL_TIMEOUT" \
-      "${retry_args[@]}" \
+      ${retry_args[@]+"${retry_args[@]}"} \
       -X "$method" "${CLAWCTL_HOST}${path}" \
       -H "Authorization: Bearer $(_token)" \
       -H "Accept: application/json" \
@@ -326,19 +632,30 @@ PY
     ;;
 
   cli)
-    # Run an openclaw CLI command on the host with proper PATH and preserved argv.
-    # If oc-remote is installed on the host, prefer it for clean argv handling.
+    # Run an openclaw CLI command on the host via oc-remote.
+    # oc-remote is REQUIRED: it accepts argv as a slice and invokes openclaw
+    # without shell-string interpolation, so callers cannot inject host-side
+    # shell metacharacters via argv. There is no fallback path.
     _require_ssh_host
-    if ssh -o BatchMode=yes -o ConnectTimeout=5 "$CLAWCTL_SSH_HOST" 'test -x /usr/local/bin/oc-remote' 2>/dev/null; then
-      ssh "$CLAWCTL_SSH_HOST" -- /usr/local/bin/oc-remote "$@"
-    else
-      # Fallback: shell-escape each arg ourselves.
-      esc=""
-      for a in "$@"; do
-        esc+=" $(printf %q "$a")"
-      done
-      ssh "$CLAWCTL_SSH_HOST" "export PATH=\$HOME/.npm-global/bin:\$PATH; openclaw$esc"
+    if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "$CLAWCTL_SSH_HOST" \
+        'test -x /usr/local/bin/oc-remote' 2>/dev/null; then
+      cat >&2 <<EOF
+clawctl cli: oc-remote not found at /usr/local/bin/oc-remote on $CLAWCTL_SSH_HOST.
+
+oc-remote is required so argv reaches openclaw without shell-string
+interpolation. Install it on the host (see the "oc-remote (required for
+clawctl cli)" section in README.md for the full procedure):
+
+  ssh $CLAWCTL_SSH_HOST 'sudo install -m 0755 /dev/stdin /usr/local/bin/oc-remote' <<'OCREMOTE'
+  #!/usr/bin/env bash
+  set -euo pipefail
+  export PATH="\$HOME/.npm-global/bin:\$PATH"
+  exec openclaw "\$@"
+  OCREMOTE
+EOF
+      exit 2
     fi
+    ssh "$CLAWCTL_SSH_HOST" -- /usr/local/bin/oc-remote "$@"
     ;;
 
   verify)
@@ -453,13 +770,18 @@ sys.exit(0)
     ;;
 
   help|--help|-h|"")
+    _print_deprecation_banner
     cat <<EOF
-clawctl — openclaw client (host: ${CLAWCTL_HOST:-<unset>})
+clawctl.bash — openclaw client, bash entrypoint (DEPRECATED; host: ${CLAWCTL_HOST:-<unset>})
 
   clawctl health                              gateway liveness
   clawctl models                              list registered agents (60s cache)
-  clawctl msg [-s SESSION] AGENT [TEXT]       chat with agent; stdin if no text
-  clawctl stream [-s SESSION] AGENT [TEXT]    same, SSE; output buffered + redacted
+  clawctl msg [-s SESSION] [--envelope] AGENT [TEXT]
+                                              chat with agent; stdin if no text
+                                              --envelope emits a v1 ToolResponse JSON document
+  clawctl stream [-s SESSION] [--envelope] AGENT [TEXT]
+                                              same, SSE; output buffered + redacted
+                                              --envelope emits NDJSON ToolStreamChunks + final ToolResponse
   clawctl raw METHOD PATH [curl-args]         arbitrary call with auth + traceparent
   clawctl cli SUBCOMMAND...                   run \`openclaw …\` over SSH on host
   clawctl verify KIND ARGS                    R-2 claim verification (see 'clawctl verify help')
@@ -476,14 +798,30 @@ Optional env:
   CLAWCTL_NO_REDACT=1       disable client-side response redaction (NOT recommended)
   CLAWCTL_MODELS_TTL        seconds to cache /v1/models (default 60)
 
-Exit codes for transport calls:
+Exit codes (transport):
   0   ok
+  2   usage error, missing env var, unknown subcommand
   6   DNS resolution failed
   7   connection refused
   22  HTTP 4xx/5xx (body printed; reason on stderr)
   28  timeout
-  2   usage error
+
+Subcommand-specific exit codes (rationale):
+  verify    1 = unverified (commit/PR/issue/file not found); see 'clawctl verify help'
+  cli       pass-through: ssh and oc-remote/openclaw exit codes reach the caller unchanged
+  trace     best-effort: returns 0 even when Jaeger is unreachable so the UI link still surfaces
 EOF
+    ;;
+
+  _redact)
+    # Hidden helper for parity testing only (intentionally absent from
+    # `clawctl help`). Reads stdin, writes redacted text to stdout. The
+    # optional positional arg is the agent tag carried into the stderr
+    # WARNING line and the audit-file entry. CLAWCTL_REDACT_SINK,
+    # CLAWCTL_NO_REDACT, and CLAWCTL_CACHE_DIR behave identically to
+    # their use inside the production subcommands. Used by
+    # test/parity-redact.sh to diff bash _redact vs the Go port.
+    _redact "${1:-?}"
     ;;
 
   *)

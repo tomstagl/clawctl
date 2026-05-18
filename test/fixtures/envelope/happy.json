@@ -1,0 +1,20 @@
+{
+  "envelope_version": "1",
+  "kind": "tool_response",
+  "agent": "openclaw/concierge",
+  "session_id": "sess-01HPP4Z9N0E0AVK1B3T3X4ZQAA",
+  "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+  "input": {
+    "role": "user",
+    "content": "List the agents currently registered on the gateway."
+  },
+  "tool_choice": "auto",
+  "output": "Currently registered: openclaw/concierge, openclaw/scout, openclaw/triage.",
+  "redactions": [],
+  "usage": {
+    "input_tokens": 18,
+    "output_tokens": 23,
+    "total_tokens": 41
+  },
+  "finish_reason": "stop"
+}

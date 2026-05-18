@@ -1,0 +1,279 @@
+{
+  "project": "clawctl",
+  "branchName": "ralph/full-test-coverage",
+  "description": "Full Test Coverage for clawctl: wire existing shell scripts (parity, envelope, contract) into CI, add Go coverage floor, plugin layer tests, nightly real-gateway smoke, release-tag end-to-end install + plugin smoke, and dual-pass (bash + Go) coverage for envelope/contract scripts.",
+  "userStories": [
+    {
+      "id": "US-001",
+      "title": "Hoist actionlint into ci.yml",
+      "description": "As a maintainer, I want actionlint to run on every PR (not just on tag pushes) so a YAML typo can't silently break the test pipeline.",
+      "acceptanceCriteria": [
+        "Add actionlint job to .github/workflows/ci.yml using raven-actions/actionlint@v2",
+        "Job lints all .github/workflows/*.yml files",
+        "Existing actionlint job in release.yml may stay or be removed; if removed, no lint coverage gap remains",
+        "actionlint passes on the modified ci.yml itself",
+        "go vet, go test, shellcheck, install-smoke jobs unaffected",
+        "Typecheck passes"
+      ],
+      "priority": 1,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-002",
+      "title": "Wire mock-gateway parity scripts into CI",
+      "description": "As a maintainer, I want test/parity-*.sh to run on every PR so bash-vs-Go behavioral drift is caught before merge.",
+      "acceptanceCriteria": [
+        "New CI job 'parity' on ubuntu-latest in .github/workflows/ci.yml",
+        "Job installs python3 and jq",
+        "Job runs each of parity-health.sh, parity-models.sh, parity-raw.sh, parity-verify.sh, parity-redact.sh, parity-trace.sh as a separate step",
+        "Each script's failure surfaces independently (one script failing does not skip the others)",
+        "Job passes on a clean checkout of main",
+        "actionlint passes on the modified ci.yml",
+        "Typecheck passes"
+      ],
+      "priority": 2,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-003",
+      "title": "Wire envelope contract scripts into CI",
+      "description": "As a maintainer, I want test/envelope-*.sh to run on every PR so the v1 ToolResponse / ToolStreamChunk schema contract can't silently break.",
+      "acceptanceCriteria": [
+        "New CI job 'envelope' on ubuntu-latest in .github/workflows/ci.yml",
+        "Job installs python3, jq, npx (for ajv-cli), curl",
+        "npm cache is restored via actions/cache to avoid 30s+ ajv-cli cold installs",
+        "Job runs envelope-msg.sh, envelope-stream.sh, envelope-redacted.sh, validate-fixtures.sh as separate steps",
+        "Each script validates output against schemas/envelope.v1.json",
+        "Job completes in under 2 minutes on ubuntu-latest",
+        "actionlint passes",
+        "Typecheck passes"
+      ],
+      "priority": 3,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-004",
+      "title": "Wire exit-codes, cli-hardening, install-resolver scripts into CI",
+      "description": "As a maintainer, I want the remaining mock-driven shell scripts running on every PR so the documented exit-code contract and install resolver stay honest.",
+      "acceptanceCriteria": [
+        "New CI job 'contract' on ubuntu-latest in .github/workflows/ci.yml",
+        "Job runs exit-codes.sh, cli-hardening.sh, install-resolver.sh as separate steps",
+        "Each script's failures produce a scoped, readable error line",
+        "Job passes on a clean checkout of main",
+        "actionlint passes",
+        "Typecheck passes"
+      ],
+      "priority": 4,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-005",
+      "title": "Add Go coverage measurement and 65% floor for internal/",
+      "description": "As a maintainer, I want every PR to report Go test coverage per package and fail if any internal/ package drops below 65%, so regressions in the typed core can't slip through.",
+      "acceptanceCriteria": [
+        "Replace 'go test ./...' step in ci.yml 'go' job with 'go test -coverprofile=coverage.out -covermode=atomic ./...'",
+        "Add step that runs 'go tool cover -func=coverage.out' and prints per-package coverage to the job log",
+        "Add step that fails if any internal/* package coverage is below 65.0% (awk/grep on the func output, no new tooling)",
+        "Upload coverage.out as a workflow artifact via actions/upload-artifact@v4",
+        "Floor applies only to internal/...; cmd/clawctl is exempt",
+        "Baseline check: cache 70.2%, config 96.2%, envelope 66.7%, keychain 85.2%, logging 92.7%, mcpserver 68.8%, redact 96.6%, sse 96.5%, trace 83.3%, transport/api 71.9% — all pass 65% floor today",
+        "actionlint passes",
+        "Typecheck passes"
+      ],
+      "priority": 5,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-006",
+      "title": "Add BIN= override to envelope and contract scripts",
+      "description": "As a maintainer, I want envelope-*.sh, exit-codes.sh, and cli-hardening.sh to support BIN= override so CI can validate the Go binary's contract conformance, not just clawctl.bash.",
+      "acceptanceCriteria": [
+        "test/envelope-msg.sh changes hardcoded BIN to BIN=\"${BIN:-$ROOT/clawctl.bash}\" pattern",
+        "test/envelope-stream.sh, test/envelope-redacted.sh, test/exit-codes.sh, test/cli-hardening.sh receive the same change",
+        "If any test inside those scripts depends on bash-specific behavior, guard with 'if [[ \"$BIN\" == *.bash ]]' or generalize",
+        "All five scripts still pass when invoked with no BIN= (default bash path)",
+        "All five scripts still pass shellcheck and bash -n",
+        "Typecheck passes"
+      ],
+      "priority": 6,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-007",
+      "title": "Run envelope and contract scripts dual-pass (bash + Go) in CI",
+      "description": "As a maintainer, I want the envelope and contract CI jobs to run each script twice — once against clawctl.bash, once against the freshly-built Go binary — so both targets are validated.",
+      "acceptanceCriteria": [
+        "envelope CI job (US-003) builds the Go binary into a temp path and runs each envelope script with BIN=$tmp/clawctl-go in a second pass",
+        "contract CI job (US-004) does the same for exit-codes.sh and cli-hardening.sh",
+        "Both passes (bash and Go) must succeed for the job to pass",
+        "Each pass is a distinct CI step with a clear name (e.g. 'envelope-msg.sh (bash)' and 'envelope-msg.sh (go)')",
+        "actionlint passes",
+        "Typecheck passes"
+      ],
+      "priority": 7,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-008",
+      "title": "Linux keychain backend coverage in CI",
+      "description": "As a maintainer, I want internal/keychain Linux backends (secret-tool, pass, CLAWCTL_TOKEN_CMD) tested on a real Linux runner so the fallback chain doesn't regress unnoticed.",
+      "acceptanceCriteria": [
+        "ci.yml 'go' job (or a sibling job) installs secret-tool (libsecret-tools) and pass via apt on ubuntu-latest",
+        "Existing keychain_linux_test.go cases run and pass on the Linux runner",
+        "If any case requires a backend that can't be cleanly installed, the test logs an explicit skip with reason — no silent skips",
+        "actionlint passes",
+        "Typecheck passes"
+      ],
+      "priority": 8,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-009",
+      "title": "Plugin manifest and directory convention test",
+      "description": "As a maintainer, I want automated tests that .claude-plugin/plugin.json, .claude-plugin/marketplace.json, and the commands/ + skills/ directory conventions stay valid so registry registration can't silently break.",
+      "acceptanceCriteria": [
+        "New script test/plugin-manifest.sh validates that .claude-plugin/plugin.json and .claude-plugin/marketplace.json both parse as JSON via jq",
+        "Asserts plugin.json contains the metadata keys currently present (name, version, description, repository, license)",
+        "Asserts plugin.json 'version' matches a vX.Y.Z or X.Y.Z pattern",
+        "Asserts every commands/*.md and skills/*/SKILL.md is non-empty and starts with either frontmatter (---) or an H1 (#) heading, codifying the existing convention",
+        "If marketplace.json references file paths, asserts those paths exist on disk",
+        "Script passes shellcheck and bash -n",
+        "New CI job 'plugin' on ubuntu-latest in ci.yml runs the script",
+        "actionlint passes",
+        "Typecheck passes"
+      ],
+      "priority": 9,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-010",
+      "title": "Plugin command contract test",
+      "description": "As a maintainer, I want each slash command's documented clawctl invocations to reference subcommands that still exist, so doc-vs-binary drift surfaces in CI.",
+      "acceptanceCriteria": [
+        "New script test/plugin-commands.sh extracts every fenced 'clawctl <subcommand>' invocation from commands/clawctl.md, commands/clawctl-recipes.md, commands/clawctl-cli.md",
+        "For each extracted subcommand, runs the locally-built Go binary with that subcommand and --help and asserts exit code is not 2 (unknown command)",
+        "Live network calls are NOT made — this is a name-existence check only",
+        "Failure messages include the source file and line number of the offending invocation",
+        "Script passes shellcheck and bash -n",
+        "Wired into the 'plugin' CI job from US-009",
+        "actionlint passes",
+        "Typecheck passes"
+      ],
+      "priority": 10,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-011",
+      "title": "Skill contract test for openclaw-loopback",
+      "description": "As a maintainer, I want skills/openclaw-loopback/SKILL.md's documented invariants (R-1..R-12, label scheme, YAML deliverable header) checkable in CI so silent doc rot doesn't break the loopback contract.",
+      "acceptanceCriteria": [
+        "New script test/skill-loopback.sh parses skills/openclaw-loopback/SKILL.md",
+        "Asserts every R-1 through R-12 rule heading is present",
+        "Asserts the YAML deliverable header example block parses as valid YAML (using python3 yaml.safe_load or yq if available)",
+        "Asserts referenced label names appear in a single canonical block (no scattered/duplicated definitions)",
+        "Failure messages name the specific missing rule or malformed block",
+        "Script passes shellcheck and bash -n",
+        "Wired into the 'plugin' CI job",
+        "actionlint passes",
+        "Typecheck passes"
+      ],
+      "priority": 11,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-012",
+      "title": "Create nightly.yml workflow running smoke.sh against real gateway",
+      "description": "As a maintainer, I want test/smoke.sh to run nightly against a real openclaw gateway so wire-level regressions are caught within 24 hours.",
+      "acceptanceCriteria": [
+        "New file .github/workflows/nightly.yml triggered via 'schedule: cron 0 6 * * *' and 'workflow_dispatch'",
+        "workflow_dispatch accepts an optional 'gateway_host' input to target a non-prod gateway",
+        "Job builds the Go binary fresh from main, then runs smoke.sh with BIN= pointing at it",
+        "Reads CLAWCTL_HOST and CLAWCTL_GATEWAY_TOKEN from repository secrets (documented in test/README.md to come)",
+        "On failure: opens a GitHub issue with label 'nightly-smoke-failure' if no open issue with that label exists; otherwise comments on the existing one (dedupe via gh issue list --label nightly-smoke-failure --state open)",
+        "On success when an open 'nightly-smoke-failure' issue exists: comment 'recovered' and close the issue",
+        "actionlint passes on nightly.yml",
+        "Typecheck passes"
+      ],
+      "priority": 12,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-013",
+      "title": "Add Go-vs-bash parity smoke for live gateway",
+      "description": "As a maintainer, I want a parity check that diffs clawctl.bash and clawctl (Go) against the real gateway nightly so the bash artifact stays a meaningful fixture.",
+      "acceptanceCriteria": [
+        "New script test/smoke-parity.sh runs health, models, raw GET /health, verify through both binaries against $CLAWCTL_HOST",
+        "Diffs stdout after canonicalizing trace ids (s/[0-9a-f]{32}/<TRACE_ID>/), durations, and ISO timestamps",
+        "Differences reported as +got/-want blocks per subcommand, not just exit codes",
+        "Wired into nightly.yml as a step after smoke.sh",
+        "Script passes shellcheck and bash -n",
+        "actionlint passes",
+        "Typecheck passes"
+      ],
+      "priority": 13,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-014",
+      "title": "Extend install-smoke job with health, redact, and plugin checks",
+      "description": "As a maintainer, when a v* tag has been published, I want the install-smoke job to exercise health (mock gateway), redact round-trip, and plugin-manifest validation against the released binary, so distribution breaks are caught before users hit them.",
+      "acceptanceCriteria": [
+        "Extend existing install-smoke job in ci.yml — do not create a new workflow",
+        "After existing version + --help check, add: clawctl health against a python3 -m http.server mock returning canned /health JSON",
+        "Add: clawctl _redact round-trip on a known leak fixture (e.g. dt0c01 leak) — assert the leak does not appear in stdout",
+        "Add: bash test/plugin-manifest.sh (from US-009)",
+        "Job runs on macos-latest and ubuntu-latest (current matrix preserved)",
+        "Job uses the released binary downloaded by install/install.sh, not a fresh go build",
+        "actionlint passes",
+        "Typecheck passes"
+      ],
+      "priority": 14,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-015",
+      "title": "Gate release.yml build job on mocked-test jobs",
+      "description": "As a maintainer, I want a v* tag push to fail before binaries are built if the parity, envelope, contract, or plugin tests fail, so I can't ship a release whose mocked-gateway behavior is broken.",
+      "acceptanceCriteria": [
+        "Add a 'mocked-tests' job to release.yml that runs the same scripts as the parity, envelope, contract, plugin CI jobs",
+        "release.yml 'build' job's needs: list adds 'mocked-tests' alongside existing 'actionlint' and 'test' deps",
+        "If mocked-tests fail, build does not run and no GitHub Release is created",
+        "actionlint passes on the modified release.yml",
+        "Typecheck passes"
+      ],
+      "priority": 15,
+      "passes": true,
+      "notes": ""
+    },
+    {
+      "id": "US-016",
+      "title": "Document the test landscape in test/README.md",
+      "description": "As a contributor, I want a single page that lists what each test script covers, where it runs (PR / nightly / release), and what env it needs, so I can pick the right surface to extend.",
+      "acceptanceCriteria": [
+        "New file test/README.md with a markdown table: script name -> what it tests -> CI job -> required env / deps -> mocked-vs-live -> bash-only / Go-capable",
+        "Table covers all 13 existing scripts plus smoke-parity.sh, plugin-manifest.sh, plugin-commands.sh, skill-loopback.sh added in this PRD",
+        "Doc names the boundary explicitly: 'anything new that needs a live gateway goes in nightly, not PR'",
+        "Doc names the secrets required for nightly (CLAWCTL_HOST, CLAWCTL_GATEWAY_TOKEN) and instructs maintainers to use a dedicated low-privilege gateway token",
+        "CLAUDE.md 'Common commands' section updated to point at test/README.md instead of listing scripts ad hoc",
+        "Typecheck passes"
+      ],
+      "priority": 16,
+      "passes": true,
+      "notes": ""
+    }
+  ]
+}

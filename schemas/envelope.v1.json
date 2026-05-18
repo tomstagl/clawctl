@@ -1,0 +1,275 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://clawctl.dev/schemas/envelope.v1.json",
+  "title": "clawctl tool envelope (v1)",
+  "description": "Versioned envelope shape that clawctl emitters and consumers exchange when invoking openclaw agents as typed tools. A single document is one of: ToolRequest, ToolResponse, ToolStreamChunk, ToolError. The envelope_version field MUST be '1' for every member of this family; breaking changes bump to envelope.v2.json.",
+  "oneOf": [
+    { "$ref": "#/$defs/ToolRequest" },
+    { "$ref": "#/$defs/ToolResponse" },
+    { "$ref": "#/$defs/ToolStreamChunk" },
+    { "$ref": "#/$defs/ToolError" }
+  ],
+
+  "$defs": {
+    "EnvelopeVersion": {
+      "type": "string",
+      "const": "1",
+      "description": "Pinned literal for v1. Consumers MUST reject unknown versions rather than guessing."
+    },
+
+    "AgentSlug": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 256,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$",
+      "description": "Gateway-published agent slug (e.g. 'openclaw/concierge'). Validated client-side against /v1/models when the cache is reachable; this schema only enforces shape."
+    },
+
+    "Traceparent": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{2}-[0-9a-f]{32}-[0-9a-f]{16}-[0-9a-f]{2}$",
+      "description": "W3C traceparent header value. Required on every envelope so callers can cite a trace-id (design principle 3) without dumping bodies."
+    },
+
+    "SessionId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Optional opaque conversation handle. Servers MAY ignore it for stateless calls."
+    },
+
+    "ToolChoice": {
+      "type": "string",
+      "enum": ["auto", "none", "required"],
+      "description": "Hint to the agent about whether it should call sub-tools. 'auto' is the default when omitted."
+    },
+
+    "Input": {
+      "type": "object",
+      "description": "User-provided prompt for the agent. Mirrors the OpenAI-compatible chat-completions content shape, restricted to text for v1.",
+      "required": ["content"],
+      "additionalProperties": false,
+      "properties": {
+        "role": {
+          "type": "string",
+          "enum": ["user", "system", "tool"],
+          "default": "user"
+        },
+        "content": {
+          "type": "string",
+          "description": "Plain-text prompt. Multi-modal content (images, files) is intentionally deferred to v2."
+        }
+      }
+    },
+
+    "Usage": {
+      "type": "object",
+      "description": "Token accounting echoed from the gateway. Counts are integers; missing fields mean the gateway did not report them.",
+      "additionalProperties": false,
+      "properties": {
+        "input_tokens": { "type": "integer", "minimum": 0 },
+        "output_tokens": { "type": "integer", "minimum": 0 },
+        "total_tokens": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "FinishReason": {
+      "type": "string",
+      "enum": ["stop", "length", "content_filter", "tool_call", "error"],
+      "description": "Why the agent stopped. Mirrors the OpenAI-compatible vocabulary plus 'error' for transport/agent failures surfaced inside a ToolResponse."
+    },
+
+    "RedactionKind": {
+      "type": "string",
+      "description": "Kind of secret matched by clawctl's boundary redactor. Values mirror the perl pattern table in clawctl (_redact). 'gw_token' covers literal matches against the live bearer token.",
+      "enum": [
+        "dt0c01",
+        "dt0s16",
+        "gh_token",
+        "aws_akid",
+        "jwt",
+        "brave",
+        "gw_token"
+      ]
+    },
+
+    "Redaction": {
+      "type": "object",
+      "description": "One redaction event surfaced in-band so callers can detect masking without parsing stderr.",
+      "required": ["kind"],
+      "additionalProperties": false,
+      "properties": {
+        "kind": { "$ref": "#/$defs/RedactionKind" },
+        "offset_hint": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Approximate byte offset into the original (un-redacted) stdout where the match started. Diagnostic only; not authoritative."
+        },
+        "count": {
+          "type": "integer",
+          "minimum": 1,
+          "default": 1,
+          "description": "Number of times this kind matched in the surrounding payload."
+        }
+      }
+    },
+
+    "ErrorCode": {
+      "type": "string",
+      "description": "Stable, machine-readable error code. Mapping from gateway HTTP and curl exit codes:\n  - transport.dns           -> curl 6\n  - transport.connection_refused -> curl 7\n  - transport.timeout       -> curl 28\n  - transport.tls           -> curl 35/60\n  - gateway.bad_request     -> HTTP 400\n  - gateway.unauthorized    -> HTTP 401\n  - gateway.forbidden       -> HTTP 403\n  - gateway.not_found       -> HTTP 404\n  - gateway.rate_limited    -> HTTP 429\n  - gateway.internal        -> HTTP 500\n  - gateway.upstream_unavailable -> HTTP 502/503/504\n  - agent.unknown           -> /v1/models lookup miss or HTTP 404 with agent context\n  - agent.unavailable       -> agent registered but currently disabled/draining\n  - redaction.applied       -> informational; emitted alongside ToolResponse when redactions[] is non-empty and the caller asked for explicit error surfacing\n  - redaction.audit_write_failed -> append to ~/.cache/clawctl/last-redaction failed\n  - envelope.invalid        -> caller sent a payload that did not validate against this schema\n  - usage.invalid_argument  -> caller-side argument or env-var error (clawctl exit 2)",
+      "enum": [
+        "transport.dns",
+        "transport.connection_refused",
+        "transport.timeout",
+        "transport.tls",
+        "gateway.bad_request",
+        "gateway.unauthorized",
+        "gateway.forbidden",
+        "gateway.not_found",
+        "gateway.rate_limited",
+        "gateway.internal",
+        "gateway.upstream_unavailable",
+        "agent.unknown",
+        "agent.unavailable",
+        "redaction.applied",
+        "redaction.audit_write_failed",
+        "envelope.invalid",
+        "usage.invalid_argument"
+      ]
+    },
+
+    "ToolRequest": {
+      "type": "object",
+      "description": "Caller -> clawctl. The shape an LLM emits when it wants to invoke an openclaw agent as a tool.",
+      "required": ["envelope_version", "kind", "agent", "traceparent", "input"],
+      "additionalProperties": false,
+      "properties": {
+        "envelope_version": { "$ref": "#/$defs/EnvelopeVersion" },
+        "kind": { "type": "string", "const": "tool_request" },
+        "agent": { "$ref": "#/$defs/AgentSlug" },
+        "session_id": { "$ref": "#/$defs/SessionId" },
+        "traceparent": { "$ref": "#/$defs/Traceparent" },
+        "input": { "$ref": "#/$defs/Input" },
+        "tool_choice": { "$ref": "#/$defs/ToolChoice" }
+      }
+    },
+
+    "ToolResponse": {
+      "type": "object",
+      "description": "clawctl -> caller. Final, non-streaming result of a tool call. 'redactions' is always present (possibly empty) so consumers can branch on it without null-checks.",
+      "required": [
+        "envelope_version",
+        "kind",
+        "agent",
+        "traceparent",
+        "input",
+        "redactions",
+        "usage",
+        "finish_reason"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "envelope_version": { "$ref": "#/$defs/EnvelopeVersion" },
+        "kind": { "type": "string", "const": "tool_response" },
+        "agent": { "$ref": "#/$defs/AgentSlug" },
+        "session_id": { "$ref": "#/$defs/SessionId" },
+        "traceparent": { "$ref": "#/$defs/Traceparent" },
+        "input": { "$ref": "#/$defs/Input" },
+        "tool_choice": { "$ref": "#/$defs/ToolChoice" },
+        "output": {
+          "type": "string",
+          "description": "Aggregate text content the agent produced, post-redaction."
+        },
+        "redactions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Redaction" }
+        },
+        "usage": { "$ref": "#/$defs/Usage" },
+        "finish_reason": { "$ref": "#/$defs/FinishReason" }
+      }
+    },
+
+    "ToolStreamChunk": {
+      "type": "object",
+      "description": "clawctl -> caller. One streaming delta. The terminal frame is delivered as a ToolResponse, not a chunk; chunks always have finish_reason=null.",
+      "required": [
+        "envelope_version",
+        "kind",
+        "agent",
+        "traceparent",
+        "index",
+        "delta"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "envelope_version": { "$ref": "#/$defs/EnvelopeVersion" },
+        "kind": { "type": "string", "const": "tool_stream_chunk" },
+        "agent": { "$ref": "#/$defs/AgentSlug" },
+        "session_id": { "$ref": "#/$defs/SessionId" },
+        "traceparent": { "$ref": "#/$defs/Traceparent" },
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "0-based sequence number within this stream. Strictly increasing."
+        },
+        "delta": {
+          "type": "object",
+          "required": ["content"],
+          "additionalProperties": false,
+          "properties": {
+            "content": {
+              "type": "string",
+              "description": "Post-redaction text fragment. May be empty (e.g. role-only frames)."
+            }
+          }
+        },
+        "redactions": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/Redaction" },
+          "description": "Redactions discovered during this chunk. Buffer-aware emitters MAY hold a chunk until they can decide whether redaction is needed; see the streaming-buffering note in CLAUDE.md."
+        },
+        "finish_reason": {
+          "type": "null",
+          "description": "Always null for chunks; the terminal frame is emitted as a ToolResponse."
+        }
+      }
+    },
+
+    "ToolError": {
+      "type": "object",
+      "description": "clawctl -> caller. Terminal failure envelope. Maps to a non-zero clawctl exit code; see docs/transport-decisions.md for the per-subcommand contract.",
+      "required": ["envelope_version", "kind", "code", "message", "traceparent"],
+      "additionalProperties": false,
+      "properties": {
+        "envelope_version": { "$ref": "#/$defs/EnvelopeVersion" },
+        "kind": { "type": "string", "const": "tool_error" },
+        "agent": { "$ref": "#/$defs/AgentSlug" },
+        "session_id": { "$ref": "#/$defs/SessionId" },
+        "traceparent": { "$ref": "#/$defs/Traceparent" },
+        "code": { "$ref": "#/$defs/ErrorCode" },
+        "message": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Human-readable, post-redaction one-liner. Never includes secrets; bodies stay in stderr/audit."
+        },
+        "http_status": {
+          "type": "integer",
+          "minimum": 100,
+          "maximum": 599,
+          "description": "Original gateway HTTP status, when the failure originated from a gateway response."
+        },
+        "exit_code": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 255,
+          "description": "clawctl exit code that accompanies this error (matches the contract documented in clawctl help)."
+        },
+        "details": {
+          "type": "object",
+          "description": "Free-form, JSON-safe diagnostic context. Implementations MUST NOT place raw response bodies here.",
+          "additionalProperties": true
+        }
+      }
+    }
+  }
+}

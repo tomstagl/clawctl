@@ -1,0 +1,236 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  # Lint the workflow itself so the release path can't silently rot.
+  # Acceptance criterion (US-029): "Workflow lints with actionlint".
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: actionlint
+        uses: raven-actions/actionlint@v2
+        with:
+          files: ".github/workflows/*.yml"
+
+  # Run the test suite once before producing release artifacts. Building four
+  # binaries from a broken tree wastes a release slot, so gate on `go test`.
+  test:
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: go vet
+        run: go vet ./...
+      - name: go test
+        run: go test ./...
+
+  mocked-tests:
+    runs-on: ubuntu-latest
+    env:
+      CGO_ENABLED: "0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: Cache npm (ajv-cli)
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ajv-cli-v5-${{ runner.os }}
+      - name: Install deps
+        run: sudo apt-get install -y python3 python3-yaml jq curl
+      - name: Build Go binary
+        run: go build -o "$RUNNER_TEMP/clawctl-go" ./cmd/clawctl
+      # Parity scripts
+      - name: parity-health.sh
+        id: parity_health
+        continue-on-error: true
+        run: bash test/parity-health.sh
+      - name: parity-models.sh
+        id: parity_models
+        continue-on-error: true
+        run: bash test/parity-models.sh
+      - name: parity-raw.sh
+        id: parity_raw
+        continue-on-error: true
+        run: bash test/parity-raw.sh
+      - name: parity-verify.sh
+        id: parity_verify
+        continue-on-error: true
+        run: bash test/parity-verify.sh
+      - name: parity-redact.sh
+        id: parity_redact
+        continue-on-error: true
+        run: bash test/parity-redact.sh
+      - name: parity-trace.sh
+        id: parity_trace
+        continue-on-error: true
+        run: bash test/parity-trace.sh
+      # Envelope scripts
+      - name: validate-fixtures.sh
+        id: fixtures
+        continue-on-error: true
+        run: bash test/validate-fixtures.sh
+      - name: envelope-msg.sh (bash)
+        id: msg_bash
+        continue-on-error: true
+        run: bash test/envelope-msg.sh
+      - name: envelope-stream.sh (bash)
+        id: stream_bash
+        continue-on-error: true
+        run: bash test/envelope-stream.sh
+      - name: envelope-redacted.sh (bash)
+        id: redacted_bash
+        continue-on-error: true
+        run: bash test/envelope-redacted.sh
+      - name: envelope-msg.sh (go)
+        id: msg_go
+        continue-on-error: true
+        run: BIN="$RUNNER_TEMP/clawctl-go" bash test/envelope-msg.sh
+      - name: envelope-stream.sh (go)
+        id: stream_go
+        continue-on-error: true
+        run: BIN="$RUNNER_TEMP/clawctl-go" bash test/envelope-stream.sh
+      - name: envelope-redacted.sh (go)
+        id: redacted_go
+        continue-on-error: true
+        run: BIN="$RUNNER_TEMP/clawctl-go" bash test/envelope-redacted.sh
+      # Contract scripts
+      - name: exit-codes.sh (bash)
+        id: exitcodes_bash
+        continue-on-error: true
+        run: bash test/exit-codes.sh
+      - name: cli-hardening.sh (bash)
+        id: hardening_bash
+        continue-on-error: true
+        run: bash test/cli-hardening.sh
+      - name: install-resolver.sh
+        id: resolver
+        continue-on-error: true
+        run: bash test/install-resolver.sh
+      - name: exit-codes.sh (go)
+        id: exitcodes_go
+        continue-on-error: true
+        run: BIN="$RUNNER_TEMP/clawctl-go" bash test/exit-codes.sh
+      - name: cli-hardening.sh (go)
+        id: hardening_go
+        continue-on-error: true
+        run: BIN="$RUNNER_TEMP/clawctl-go" bash test/cli-hardening.sh
+      # Plugin scripts
+      - name: plugin-manifest.sh
+        id: plugin_manifest
+        continue-on-error: true
+        run: bash test/plugin-manifest.sh
+      - name: plugin-commands.sh
+        id: plugin_commands
+        continue-on-error: true
+        run: BIN="$RUNNER_TEMP/clawctl-go" bash test/plugin-commands.sh
+      - name: skill-loopback.sh
+        id: skill_loopback
+        continue-on-error: true
+        run: bash test/skill-loopback.sh
+      - name: Fail if any mocked-test script failed
+        if: always()
+        run: |
+          failed=0
+          [ "${{ steps.parity_health.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.parity_models.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.parity_raw.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.parity_verify.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.parity_redact.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.parity_trace.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.fixtures.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.msg_bash.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.stream_bash.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.redacted_bash.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.msg_go.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.stream_go.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.redacted_go.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.exitcodes_bash.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.hardening_bash.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.resolver.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.exitcodes_go.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.hardening_go.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.plugin_manifest.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.plugin_commands.outcome }}" = "failure" ] && failed=1
+          [ "${{ steps.skill_loopback.outcome }}" = "failure" ] && failed=1
+          exit $failed
+
+  build:
+    needs: [actionlint, test, mocked-tests]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+    env:
+      CGO_ENABLED: "0"
+      GOOS: ${{ matrix.goos }}
+      GOARCH: ${{ matrix.goarch }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.24"
+      - name: build
+        run: |
+          out="clawctl-${GOOS}-${GOARCH}"
+          go build \
+            -trimpath \
+            -ldflags "-s -w -X main.version=${GITHUB_REF_NAME} -X main.commit=${GITHUB_SHA}" \
+            -o "${out}" \
+            ./cmd/clawctl
+      - name: upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: clawctl-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: clawctl-${{ matrix.goos }}-${{ matrix.goarch }}
+          if-no-files-found: error
+          retention-days: 7
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: list artifacts
+        run: ls -la dist
+      - name: generate checksums
+        working-directory: dist
+        run: sha256sum clawctl-* > SHA256SUMS
+      - name: create release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes \
+            dist/clawctl-* dist/SHA256SUMS
