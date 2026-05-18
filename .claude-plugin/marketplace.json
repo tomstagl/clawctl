@@ -5,14 +5,14 @@
   },
   "metadata": {
     "description": "kubectl-style slash commands, GitHub loop-back skill, and MCP server for the openclaw agent gateway.",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "plugins": [
     {
       "name": "clawctl",
       "source": "./",
       "description": "kubectl-style slash commands and a GitHub loop-back skill for the openclaw agent gateway. Bundled with the clawctl wrapper binary.",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "keywords": ["openclaw", "agents", "kubectl-style", "observability", "github-loopback", "mcp"],
       "category": "productivity",
       "skills": "./skills/"

@@ -11,7 +11,7 @@
 #
 # Subcommand-specific overrides documented in `clawctl help`:
 #   verify    1 = unverified (commit/PR/issue/file not found)
-#   cli       pass-through: ssh / oc-remote / openclaw exit code unchanged
+#   cli       pass-through: ssh / clawctl-remote / openclaw exit code unchanged
 #   trace     best-effort: 0 even when Jaeger is unreachable so the UI link surfaces
 #
 # Strategy: shadow `curl` (and `security`) on PATH with stubs whose exit code

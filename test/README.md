@@ -19,7 +19,7 @@ This document describes every test script in `test/`, where it runs, what it req
 | `envelope-redacted.sh` | Redaction events in `envelope.redactions[]`; stderr WARNING; audit file | `envelope` | python3, jq, curl, npx (ajv-cli@5) | Mocked (python3 HTTP server) | Both |
 | `validate-fixtures.sh` | Static envelope fixture files in `test/fixtures/envelope/` against v1 schema | `envelope` | npx (ajv-cli@5) | Mocked (no network) | Bash only |
 | `exit-codes.sh` | Exit-code contract (0/2/6/7/22/28) for every subcommand × failure mode | `contract` | (curl/security stubs via PATH) | Mocked (stub binaries) | Both |
-| `cli-hardening.sh` | `clawctl cli` SSH argv forwarding; oc-remote absent/present; metachar safety | `contract` | (ssh stub via PATH) | Mocked (stub binaries) | Both |
+| `cli-hardening.sh` | `clawctl cli` SSH argv forwarding; clawctl-remote absent/present; metachar safety | `contract` | (ssh stub via PATH) | Mocked (stub binaries) | Both |
 | `install-resolver.sh` | `install/install.sh` end-to-end: platform detection, checksum, upgrade/refuse | `contract` | (curl/uname stubs via PATH) | Mocked (fixture tree) | Bash only (tests the installer) |
 | `plugin-manifest.sh` | `.claude-plugin/plugin.json` + `marketplace.json` validity; file-header convention | `plugin`, `install-smoke` | jq | Mocked (no network) | Bash only |
 | `plugin-commands.sh` | Subcommand name-existence: every `clawctl <sub>` in command docs resolves in Go binary | `plugin` | Go toolchain | Mocked (no network) | Go only |

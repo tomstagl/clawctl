@@ -97,7 +97,7 @@ Install the Claude Code plugin from this repo's marketplace in one step:
 
 ```bash
 claude plugin marketplace add tomstagl/clawctl
-claude plugin install clawctl
+claude plugin install clawctl@clawctl
 ```
 
 The plugin requires `clawctl` on PATH. If it's not installed yet, run the [Install](#install) command first.
@@ -168,12 +168,12 @@ go build -o /usr/local/bin/clawctl ./cmd/clawctl
 ./install/ssh-setup.sh
 ```
 
-### oc-remote (required for `clawctl cli`)
+### clawctl-remote (required for `clawctl cli`)
 
-`clawctl cli` requires `/usr/local/bin/oc-remote` on the gateway host. Install once:
+`clawctl cli` requires `/usr/local/bin/clawctl-remote` on the gateway host. Install once:
 
 ```bash
-ssh "$CLAWCTL_SSH_HOST" 'sudo install -m 0755 /dev/stdin /usr/local/bin/oc-remote' <<'OCREMOTE'
+ssh "$CLAWCTL_SSH_HOST" 'sudo install -m 0755 /dev/stdin /usr/local/bin/clawctl-remote' <<'OCREMOTE'
 #!/usr/bin/env bash
 set -euo pipefail
 export PATH="$HOME/.npm-global/bin:$PATH"

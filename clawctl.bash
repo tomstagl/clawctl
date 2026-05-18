@@ -632,21 +632,21 @@ PY
     ;;
 
   cli)
-    # Run an openclaw CLI command on the host via oc-remote.
-    # oc-remote is REQUIRED: it accepts argv as a slice and invokes openclaw
+    # Run an openclaw CLI command on the host via clawctl-remote.
+    # clawctl-remote is REQUIRED: it accepts argv as a slice and invokes openclaw
     # without shell-string interpolation, so callers cannot inject host-side
     # shell metacharacters via argv. There is no fallback path.
     _require_ssh_host
     if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "$CLAWCTL_SSH_HOST" \
-        'test -x /usr/local/bin/oc-remote' 2>/dev/null; then
+        'test -x /usr/local/bin/clawctl-remote' 2>/dev/null; then
       cat >&2 <<EOF
-clawctl cli: oc-remote not found at /usr/local/bin/oc-remote on $CLAWCTL_SSH_HOST.
+clawctl cli: clawctl-remote not found at /usr/local/bin/clawctl-remote on $CLAWCTL_SSH_HOST.
 
-oc-remote is required so argv reaches openclaw without shell-string
-interpolation. Install it on the host (see the "oc-remote (required for
+clawctl-remote is required so argv reaches openclaw without shell-string
+interpolation. Install it on the host (see the "clawctl-remote (required for
 clawctl cli)" section in README.md for the full procedure):
 
-  ssh $CLAWCTL_SSH_HOST 'sudo install -m 0755 /dev/stdin /usr/local/bin/oc-remote' <<'OCREMOTE'
+  ssh $CLAWCTL_SSH_HOST 'sudo install -m 0755 /dev/stdin /usr/local/bin/clawctl-remote' <<'OCREMOTE'
   #!/usr/bin/env bash
   set -euo pipefail
   export PATH="\$HOME/.npm-global/bin:\$PATH"
@@ -655,7 +655,7 @@ clawctl cli)" section in README.md for the full procedure):
 EOF
       exit 2
     fi
-    ssh "$CLAWCTL_SSH_HOST" -- /usr/local/bin/oc-remote "$@"
+    ssh "$CLAWCTL_SSH_HOST" -- /usr/local/bin/clawctl-remote "$@"
     ;;
 
   verify)
@@ -808,7 +808,7 @@ Exit codes (transport):
 
 Subcommand-specific exit codes (rationale):
   verify    1 = unverified (commit/PR/issue/file not found); see 'clawctl verify help'
-  cli       pass-through: ssh and oc-remote/openclaw exit codes reach the caller unchanged
+  cli       pass-through: ssh and clawctl-remote/openclaw exit codes reach the caller unchanged
   trace     best-effort: returns 0 even when Jaeger is unreachable so the UI link still surfaces
 EOF
     ;;

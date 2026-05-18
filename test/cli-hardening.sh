@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # cli-hardening.sh — assert that `clawctl cli`:
-#   1. Calls oc-remote on the host when it is present (and passes argv as a
+#   1. Calls clawctl-remote on the host when it is present (and passes argv as a
 #      slice, byte-for-byte, with no shell-string concatenation).
 #   2. Exits 2 with a remediation message pointing at install instructions
-#      when oc-remote is absent on the host.
+#      when clawctl-remote is absent on the host.
 #   3. Preserves argv with spaces, single quotes, double quotes, and shell
 #      metacharacters end-to-end (verifies the printf %q fallback is gone).
 #
 # Strategy: shadow `ssh` on PATH with a fake that distinguishes the
-# `test -x /usr/local/bin/oc-remote` probe from the actual invocation, and
-# logs argv to stdout so the test can diff what reached oc-remote against
+# `test -x /usr/local/bin/clawctl-remote` probe from the actual invocation, and
+# logs argv to stdout so the test can diff what reached clawctl-remote against
 # what was passed on the clawctl command line.
 #
 # This test does NOT require a network or a real gateway. It exercises only
@@ -32,15 +32,15 @@ fi
 # Fake ssh shared prelude. SSH_OCREMOTE_PRESENT controls probe behaviour.
 # When the probe is detected (last arg starts with "test -x"), we exit 0 if
 # present, 1 if absent. Otherwise we treat the trailing argv as the call to
-# oc-remote and emit one line per arg so the test can assert exact preservation.
+# clawctl-remote and emit one line per arg so the test can assert exact preservation.
 write_fake_ssh() {
   cat >"$TMP/ssh" <<'EOF'
 #!/usr/bin/env bash
 # Fake ssh used by test/cli-hardening.sh.
 #
 # Real ssh argv shapes we care about:
-#   ssh -o BatchMode=yes -o ConnectTimeout=5 HOST 'test -x /usr/local/bin/oc-remote'
-#   ssh HOST -- /usr/local/bin/oc-remote ARG ARG ...
+#   ssh -o BatchMode=yes -o ConnectTimeout=5 HOST 'test -x /usr/local/bin/clawctl-remote'
+#   ssh HOST -- /usr/local/bin/clawctl-remote ARG ARG ...
 #
 # We strip option flags until we hit the host token, drop a leading `--` if
 # present, then either honour the probe or echo the remaining argv.
@@ -88,29 +88,29 @@ ok()    { echo "  ok    $*"; pass=$((pass + 1)); }
 fail_() { echo "  FAIL  $*" >&2; fail=$((fail + 1)); }
 
 #───────────────────────────────────────────────────────────────────────────────
-# Test 1: oc-remote present, simple argv
+# Test 1: clawctl-remote present, simple argv
 #───────────────────────────────────────────────────────────────────────────────
 
-echo "→ Test 1: oc-remote present, simple argv"
+echo "→ Test 1: clawctl-remote present, simple argv"
 out=$(SSH_OCREMOTE_PRESENT=1 run_cli agents list 2>&1) \
   || { fail_ "exit code $? (expected 0)"; out=""; }
 
 if [[ "$out" == *"HOST=example.test"* ]] \
    && [[ "$out" == *"ARGC=3"* ]] \
-   && [[ "$out" == *"ARG=<</usr/local/bin/oc-remote>>"* ]] \
+   && [[ "$out" == *"ARG=<</usr/local/bin/clawctl-remote>>"* ]] \
    && [[ "$out" == *"ARG=<<agents>>"* ]] \
    && [[ "$out" == *"ARG=<<list>>"* ]]; then
-  ok "argv reached oc-remote intact"
+  ok "argv reached clawctl-remote intact"
 else
   fail_ "unexpected argv on the wire"
   printf '%s\n' "$out" | sed 's/^/      /' >&2
 fi
 
 #───────────────────────────────────────────────────────────────────────────────
-# Test 2: oc-remote absent → exit 2 + remediation message
+# Test 2: clawctl-remote absent → exit 2 + remediation message
 #───────────────────────────────────────────────────────────────────────────────
 
-echo "→ Test 2: oc-remote absent, exit 2 with remediation message"
+echo "→ Test 2: clawctl-remote absent, exit 2 with remediation message"
 set +e
 out=$(SSH_OCREMOTE_PRESENT=0 run_cli agents list 2>&1)
 ec=$?
@@ -122,10 +122,10 @@ else
   fail_ "exit code $ec (expected 2)"
 fi
 
-if [[ "$out" == *"oc-remote not found"* ]]; then
+if [[ "$out" == *"clawctl-remote not found"* ]]; then
   ok "stderr names the missing binary"
 else
-  fail_ "stderr missing 'oc-remote not found': $out"
+  fail_ "stderr missing 'clawctl-remote not found': $out"
 fi
 
 if [[ "$out" == *"README.md"* ]] || [[ "$out" == *"install"* ]]; then
@@ -147,7 +147,7 @@ tricky_c='$(rm -rf /); `id`; |&;<>'
 out=$(SSH_OCREMOTE_PRESENT=1 run_cli msg "$tricky_a" "$tricky_b" "$tricky_c" 2>&1) \
   || { fail_ "exit code $? (expected 0)"; out=""; }
 
-# argc should be 4: oc-remote path + msg + 3 tricky args.
+# argc should be 4: clawctl-remote path + msg + 3 tricky args.
 if [[ "$out" == *"ARGC=5"* ]]; then
   ok "argc=5"
 else
@@ -155,7 +155,7 @@ else
   printf '%s\n' "$out" | sed 's/^/      /' >&2
 fi
 
-for needle in "ARG=<</usr/local/bin/oc-remote>>" \
+for needle in "ARG=<</usr/local/bin/clawctl-remote>>" \
               "ARG=<<msg>>" \
               "ARG=<<${tricky_a}>>" \
               "ARG=<<${tricky_b}>>" \

@@ -15,11 +15,11 @@ import (
 
 // installFakeSSH writes a recording shim to a tempdir and prepends that
 // dir to PATH for the duration of the test. The shim distinguishes the
-// oc-remote probe (`ssh ... 'test -x /usr/local/bin/oc-remote'`) from the
+// clawctl-remote probe (`ssh ... 'test -x /usr/local/bin/clawctl-remote'`) from the
 // real invocation by inspecting the trailing argv after option flags and
 // the host token. Probe behaviour is controlled by env vars set by the
 // caller (OCREMOTE_PROBE_EXIT, OCREMOTE_CALL_EXIT) so individual tests can
-// simulate "oc-remote present" vs. "oc-remote missing" without rewriting
+// simulate "clawctl-remote present" vs. "clawctl-remote missing" without rewriting
 // the shim. argv for the real call is recorded one entry per line in
 // <tmp>/argv.log so tests can diff what reached the SSH layer against
 // what runCLI was asked to send.
@@ -122,7 +122,7 @@ func TestRunCLI_PassesControlMasterArgsAndArgv(t *testing.T) {
 		"-o", "ControlPersist=10m",
 		"user@example.test",
 		"--",
-		"/usr/local/bin/oc-remote",
+		"/usr/local/bin/clawctl-remote",
 		"agents",
 		"list",
 	}
@@ -153,16 +153,16 @@ func TestRunCLI_PreservesSpacesQuotesDollarsBackticks(t *testing.T) {
 	}
 
 	got := readArgv(t, tmp)
-	// Locate the oc-remote anchor; everything after it is user argv.
+	// Locate the clawctl-remote anchor; everything after it is user argv.
 	anchor := -1
 	for i, a := range got {
-		if a == "/usr/local/bin/oc-remote" {
+		if a == "/usr/local/bin/clawctl-remote" {
 			anchor = i
 			break
 		}
 	}
 	if anchor < 0 {
-		t.Fatalf("oc-remote not in argv: %v", got)
+		t.Fatalf("clawctl-remote not in argv: %v", got)
 	}
 	user := got[anchor+1:]
 	wantUser := append([]string{"msg"}, tricky...)
@@ -201,14 +201,14 @@ func TestRunCLI_NoArgsStillReachesOcRemote(t *testing.T) {
 	}
 
 	got := readArgv(t, tmp)
-	// Last token must be /usr/local/bin/oc-remote with nothing after it.
-	if len(got) == 0 || got[len(got)-1] != "/usr/local/bin/oc-remote" {
-		t.Errorf("argv = %v, want trailing /usr/local/bin/oc-remote", got)
+	// Last token must be /usr/local/bin/clawctl-remote with nothing after it.
+	if len(got) == 0 || got[len(got)-1] != "/usr/local/bin/clawctl-remote" {
+		t.Errorf("argv = %v, want trailing /usr/local/bin/clawctl-remote", got)
 	}
 }
 
 // TestRunCLI_ExitsWhenOcRemoteMissing covers the US-021 acceptance criterion:
-// when the probe fails (oc-remote absent on the host) we must exit 2 with a
+// when the probe fails (clawctl-remote absent on the host) we must exit 2 with a
 // remediation message naming the install path, and we must NOT proceed to
 // invoke ssh a second time. Mirrors test/cli-hardening.sh test 2.
 func TestRunCLI_ExitsWhenOcRemoteMissing(t *testing.T) {
@@ -225,8 +225,8 @@ func TestRunCLI_ExitsWhenOcRemoteMissing(t *testing.T) {
 
 	msg := stderr.String()
 	for _, want := range []string{
-		"oc-remote not found",
-		"/usr/local/bin/oc-remote",
+		"clawctl-remote not found",
+		"/usr/local/bin/clawctl-remote",
 		"user@absent.test",
 		"README.md",
 	} {
@@ -259,8 +259,8 @@ func TestRunCLI_ProceedsWhenOcRemotePresent(t *testing.T) {
 	if got == nil {
 		t.Fatal("real ssh call did not happen after successful probe")
 	}
-	// Sanity: the recorded argv must end with the expected oc-remote slice.
-	tail := []string{"--", "/usr/local/bin/oc-remote", "agents", "list"}
+	// Sanity: the recorded argv must end with the expected clawctl-remote slice.
+	tail := []string{"--", "/usr/local/bin/clawctl-remote", "agents", "list"}
 	if len(got) < len(tail) {
 		t.Fatalf("argv too short: %v", got)
 	}

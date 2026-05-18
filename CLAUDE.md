@@ -6,12 +6,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Two products in one tree:
 
-1. **`clawctl`** — a typed Go binary built from `cmd/clawctl/` that wraps the openclaw gateway's OpenAI-compatible HTTP API plus a host-side ops CLI (`openclaw …` over SSH). All transport, auth, tracing, redaction, verification, and the MCP stdio server live in this binary. Single static binary (`CGO_ENABLED=0`); no runtime deps beyond `ssh` (only for `clawctl cli`) and the macOS `security` tool (for Keychain).
+1. **`clawctl`** — a typed Go binary built from `cmd/clawctl/` that wraps the openclaw gateway (OpenAI-compatible HTTP API) plus a host-side ops CLI (`openclaw …` over SSH). All transport, auth, tracing, redaction, verification, and the MCP stdio server live in this binary. Single static binary (`CGO_ENABLED=0`); no runtime deps beyond `ssh` (only for `clawctl cli`) and the macOS `security` tool (for Keychain).
 2. **A Claude Code plugin** (`.claude-plugin/plugin.json`) that ships slash commands in `commands/` and a skill in `skills/openclaw-loopback/` enforcing the same rules from the Claude side. Both are distributed from this repo.
 
 The wrapper and plugin share a single source of truth: the design principles in `docs/design-principles.md`. Treat those as load-bearing — the rest of the codebase is shaped to satisfy them.
 
-`clawctl.bash` is the **deprecated** original Bash implementation, kept temporarily for parity testing (see `test/parity-*.sh`). Don't add features to it; port to Go.
+`clawctl.bash` is the **deprecated** original Bash implementation, kept for parity testing (see `test/parity-*.sh`). Don't add features to it; port to Go.
 
 ## Common commands
 
@@ -24,7 +24,7 @@ go test -run=^$ -fuzz=FuzzParseSSE -fuzztime=5s ./internal/sse/
 # Build a local binary
 go build -o ./clawctl ./cmd/clawctl
 
-# Lint the bash leftovers (clawctl.bash + install.sh) — CI uses ludeeus/action-shellcheck @ severity=warning, ignoring test/
+# Lint the bash scripts (clawctl.bash + install.sh) — CI uses ludeeus/action-shellcheck @ severity=warning, ignoring test/
 bash -n ./clawctl.bash ./install/install.sh
 shellcheck ./clawctl.bash ./install/install.sh
 
@@ -41,20 +41,20 @@ For the full test landscape — what each script covers, which CI job runs it, w
 
 ### Entry point and dispatch
 
-`cmd/clawctl/main.go` holds a small `switch cmd` dispatcher with these top-level subcommands: `health`, `models`, `msg`, `stream`, `raw`, `cli`, `verify`, `trace`, `mcp`, plus the hidden `_redact` parity surface. Each subcommand has its own file (`health.go`, `msg.go`, …) and matching `*_test.go`. Build version/commit are stamped via `-ldflags '-X main.version=… -X main.commit=…'` by `release.yml`.
+`cmd/clawctl/main.go` holds a small `switch cmd` dispatcher with these top-level subcommands: `health`, `models`, `msg`, `stream`, `raw`, `cli`, `verify`, `trace`, `mcp`, plus the hidden `_redact` surface. Each subcommand has its own file (`health.go`, `msg.go`, …) and matching `*_test.go`. Build version/commit are stamped via `-ldflags '-X main.version=… -X main.commit=…'` by `release.yml`.
 
 ### Internal packages
 
 The cmd layer is thin — almost all logic lives under `internal/`:
 
-- `internal/config` — loads `CLAWCTL_*` env vars into a `Config` struct. Mirrors the bash variable set so the Go binary is a drop-in replacement.
+- `internal/config` — loads `CLAWCTL_*` env vars into a `Config` struct.
 - `internal/keychain` — the only token source. Shells out to `security find-generic-password -w`. **Never** falls back to env or disk (design principle #2). macOS-only.
 - `internal/trace` — generates W3C `traceparent` per call; trace-id printed to stderr (principle #3). Every outbound HTTP call attaches this header.
 - `internal/redact` — regex masker for known token formats (`dt0c01`, `dt0s16`, `gh[psoru]_*`, AWS AKID, JWT, Brave, plus the live gateway-token literal). On hit: prints stderr warning, appends to `~/.cache/clawctl/last-redaction`. `CLAWCTL_NO_REDACT=1` bypasses (debug only — never in CI). All output that may contain agent text **must** pass through this package before reaching stdout (principle #4).
 - `internal/cache` — 60s TTL file cache for `/v1/models` at `$CLAWCTL_CACHE_DIR/models.json`. Slug validation fails *open* with a stderr warning if the cache is unreachable, so the binary never blocks transport on metadata.
 - `internal/transport/api` — the canonical authenticated HTTP client. Wraps `net/http` with bearer auth from a `TokenSource`, traceparent injection, and curl-aligned typed errors that the cmd layer maps onto the exit-code contract (`6` DNS, `7` refused, `22` HTTP 4xx/5xx, `28` timeout).
 - `internal/sse` — Server-Sent Events parser for streaming chat completions. Has a fuzz target (`FuzzParseSSE`) that CI runs for 5s on every PR.
-- `internal/envelope` — typed v1 ToolResponse / ToolStreamChunk envelopes that `msg`/`stream` emit by default. `--text` flag toggles to bash-parity plain content.
+- `internal/envelope` — typed v1 ToolResponse / ToolStreamChunk envelopes that `msg`/`stream` emit by default. `--text` flag toggles to plain content.
 - `internal/logging` — stderr formatting; `CLAWCTL_LOG=json` switches to one JSON line per call.
 - `internal/mcpserver` — MCP stdio server backing `clawctl mcp`. Exposes one tool per agent, registered via `claude mcp add clawctl --command clawctl --args mcp`.
 
