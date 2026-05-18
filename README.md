@@ -1,4 +1,4 @@
-# oc — openclaw client wrapper
+# clawctl — openclaw client wrapper
 
 A `kubectl`-style wrapper around the [openclaw](https://openclaw.ai) gateway. One binary, no dependencies beyond what's already on your machine, and a strong opinion that gateway interactions should be **safe by default**, **traceable**, and **secret-redacted at the boundary**.
 
@@ -20,13 +20,27 @@ clawctl msg <agent> "hello"        # one-shot chat with any registered openclaw 
 
 ## Setup
 
-One required environment variable. Export it in `~/.zshrc` (or equivalent):
+Create a local config file that holds all environment-specific values — this file stays on your machine only, never in version control:
 
 ```bash
+mkdir -p ~/.config/clawctl
+cat > ~/.config/clawctl/env <<'EOF'
+# clawctl configuration — NOT for version control
 export CLAWCTL_HOST="http://your-openclaw-host:18789"
+export CLAWCTL_SSH_HOST="user@your-openclaw-host"   # only needed for `clawctl cli`
+export CLAWCTL_JAEGER_UI="http://your-jaeger-host:16686"  # only needed for `clawctl trace`
+EOF
 ```
 
-Store the bearer token in Keychain once:
+Then source it from `~/.zshrc` (or `~/.bash_profile`):
+
+```bash
+echo 'source ~/.config/clawctl/env' >> ~/.zshrc
+```
+
+Run `clawctl init` at any time to detect your platform and print setup snippets you can paste into the file. Use `clawctl init --check` to verify the current configuration.
+
+Store the bearer token in Keychain once (the binary reads it from there, never from env):
 
 ```bash
 security add-generic-password \
@@ -36,12 +50,6 @@ security add-generic-password \
 ```
 
 On Linux, set `CLAWCTL_TOKEN_CMD` to any command that prints the token (see [`docs/auth.md`](docs/auth.md) for `secret-tool` and `pass` recipes).
-
-If you plan to use `clawctl cli`, also set `CLAWCTL_SSH_HOST`:
-
-```bash
-export CLAWCTL_SSH_HOST="ops@your-openclaw-host"   # only needed for `clawctl cli`
-```
 
 Optional knobs — sensible defaults exist:
 
@@ -80,7 +88,7 @@ Exit codes: see [`docs/cli-contract.md`](docs/cli-contract.md).
 
 ```bash
 # Register clawctl as an MCP server in Claude Code
-claude mcp add clawctl --command clawctl --args mcp
+claude mcp add clawctl -- clawctl mcp
 ```
 
 ## Install Plugin
