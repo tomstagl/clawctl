@@ -139,6 +139,7 @@ run_clawctl() {
   CLAWCTL_HOST="http://127.0.0.1:$PORT" \
   CLAWCTL_CACHE_DIR="$TMP/cache" \
   CLAWCTL_KEYCHAIN_SERVICE="openclaw-gateway-token" \
+  CLAWCTL_TOKEN_CMD="echo fake-token-for-tests" \
   "$BIN" "$@"
 }
 

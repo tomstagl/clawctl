@@ -54,15 +54,15 @@ else
     if echo "$yaml_block" | python3 -c "
 import sys, yaml
 try:
-    yaml.safe_load(sys.stdin.read())
+    list(yaml.safe_load_all(sys.stdin.read()))
     print('ok')
 except Exception as e:
     print('error:', e)
     sys.exit(1)
 " 2>/dev/null | grep -q '^ok$'; then
-      ok "YAML deliverable header parses with python3 yaml.safe_load"
+      ok "YAML deliverable header parses with python3 yaml.safe_load_all"
     else
-      fail "YAML deliverable header failed yaml.safe_load in $SKILL"
+      fail "YAML deliverable header failed yaml.safe_load_all in $SKILL"
     fi
   elif command -v yq >/dev/null 2>&1; then
     if echo "$yaml_block" | yq . >/dev/null 2>&1; then
