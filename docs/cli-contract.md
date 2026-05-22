@@ -27,6 +27,13 @@ treat `clawctl` and `curl` interchangeably in shell error-handling logic.
 | `cli`      | *    | Pass-through — the SSH session and remote `openclaw` exit code reach the caller unchanged |
 | `trace`    | 0    | Best-effort — returns 0 even when Jaeger is unreachable so the UI link still surfaces |
 
+### `clawctl cli` environment variables
+
+| Variable              | Default                           | Purpose |
+|-----------------------|-----------------------------------|---------|
+| `CLAWCTL_SSH_HOST`    | _required_                        | SSH target (`user@host`) for the gateway host |
+| `CLAWCTL_REMOTE_PATH` | `/usr/local/bin/clawctl-remote`   | Install path for `clawctl-remote` on the gateway host. Set to a user-writable path (e.g. `~/.local/bin/clawctl-remote`) when the default requires root |
+
 ### Stderr vs stdout discipline
 
 | Stream | Content |

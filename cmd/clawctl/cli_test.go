@@ -61,8 +61,8 @@ if [ "$#" -eq 1 ] && [[ "$1" == "test -x"* ]]; then
   exit "$probe_exit"
 fi
 
-# Install form: single argument beginning with "sudo install".
-if [ "$#" -eq 1 ] && [[ "$1" == "sudo install"* ]]; then
+# Install form: single argument beginning with "mkdir -p".
+if [ "$#" -eq 1 ] && [[ "$1" == "mkdir -p"* ]]; then
   exit "${OCREMOTE_INSTALL_EXIT:-0}"
 fi
 

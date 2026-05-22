@@ -70,15 +70,15 @@ func probeClawctlRemote(ctx context.Context, sshHost, remotePath string) error {
 	return nil
 }
 
-// installClawctlRemote pipes the versioned shim to the host via SSH stdin and
-// installs it at remotePath with sudo. Stderr from ssh/sudo is forwarded to
-// the caller so installation failures are diagnosable.
+// installClawctlRemote pipes the versioned shim to the host via SSH stdin.
+// mkdir -p ensures the parent directory exists for user-writable paths like
+// ~/.local/bin; plain install (no sudo) works for any path the remote user owns.
 func installClawctlRemote(ctx context.Context, sshHost, remotePath string, stderr io.Writer) error {
 	cmd := exec.CommandContext(ctx, "ssh",
 		"-o", "BatchMode=yes",
 		"-o", "ConnectTimeout=10",
 		sshHost,
-		"sudo install -m 0755 /dev/stdin "+remotePath,
+		"mkdir -p $(dirname "+remotePath+") && install -m 0755 /dev/stdin "+remotePath,
 	)
 	cmd.Stdin = strings.NewReader(clawctlRemoteScript())
 	cmd.Stderr = stderr
@@ -90,9 +90,9 @@ func manualInstallMessage(sshHost, remotePath string) string {
 	return fmt.Sprintf(`
 To install manually:
 
-  ssh %s 'sudo install -m 0755 /dev/stdin %s' <<'CLAWCTLREMOTE'
+  ssh %s 'mkdir -p $(dirname %s) && install -m 0755 /dev/stdin %s' <<'CLAWCTLREMOTE'
 %sCLAWCTLREMOTE
-`, sshHost, remotePath, clawctlRemoteScript())
+`, sshHost, remotePath, remotePath, clawctlRemoteScript())
 }
 
 // runCLI implements `clawctl cli ARGS...`. It ensures clawctl-remote is

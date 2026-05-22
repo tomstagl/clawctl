@@ -57,6 +57,7 @@ Optional knobs — sensible defaults exist:
 | --------------------------- | ------------------------ | ---------------------------------------------------------- |
 | `CLAWCTL_HOST`              | _required_               | Gateway URL                                                |
 | `CLAWCTL_SSH_HOST`          | _unset_                  | SSH target for `clawctl cli`                               |
+| `CLAWCTL_REMOTE_PATH`       | _unset_                  | Override install path for `clawctl-remote` on the gateway host (default `/usr/local/bin/clawctl-remote`) |
 | `CLAWCTL_TOKEN_CMD`         | _unset_                  | Shell command that prints the bearer token                 |
 | `CLAWCTL_KEYCHAIN_SERVICE`  | `openclaw-gateway-token` | macOS Keychain entry name                                  |
 | `CLAWCTL_TIMEOUT`           | `60`                     | Per-call timeout (seconds)                                 |
@@ -170,10 +171,16 @@ go build -o /usr/local/bin/clawctl ./cmd/clawctl
 
 ### clawctl-remote (required for `clawctl cli`)
 
-`clawctl cli` requires `/usr/local/bin/clawctl-remote` on the gateway host. Install once:
+`clawctl cli` auto-installs `clawctl-remote` on the gateway host on first use. The default path is `/usr/local/bin/clawctl-remote`, which requires write access (sudo) on most systems. If the gateway host user can't write there, set `CLAWCTL_REMOTE_PATH` to a user-writable location:
 
 ```bash
-ssh "$CLAWCTL_SSH_HOST" 'sudo install -m 0755 /dev/stdin /usr/local/bin/clawctl-remote' <<'OCREMOTE'
+export CLAWCTL_REMOTE_PATH=~/.local/bin/clawctl-remote
+```
+
+`clawctl cli` will then install to (and invoke from) that path automatically. To install manually:
+
+```bash
+ssh "$CLAWCTL_SSH_HOST" 'mkdir -p $(dirname ~/.local/bin/clawctl-remote) && install -m 0755 /dev/stdin ~/.local/bin/clawctl-remote' <<'OCREMOTE'
 #!/usr/bin/env bash
 set -euo pipefail
 export PATH="$HOME/.npm-global/bin:$PATH"

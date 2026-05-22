@@ -41,7 +41,7 @@ write_fake_ssh() {
 #
 # Real ssh argv shapes we care about:
 #   ssh -o BatchMode=yes -o ConnectTimeout=5  HOST 'test -x ... && head -3 ...'
-#   ssh -o BatchMode=yes -o ConnectTimeout=10 HOST 'sudo install -m 0755 /dev/stdin ...'
+#   ssh -o BatchMode=yes -o ConnectTimeout=10 HOST 'mkdir -p $(dirname ...) && install -m 0755 /dev/stdin ...'
 #   ssh -o ControlMaster=auto ... HOST -- /usr/local/bin/clawctl-remote ARG ARG ...
 #
 # We strip option flags until we hit the host token, drop a leading `--` if
@@ -69,8 +69,8 @@ if [ "$#" -eq 1 ] && [[ "$1" == "test -x"* ]]; then
   fi
 fi
 
-# Install form: single argument beginning with "sudo install".
-if [ "$#" -eq 1 ] && [[ "$1" == "sudo install"* ]]; then
+# Install form: single argument beginning with "mkdir -p".
+if [ "$#" -eq 1 ] && [[ "$1" == "mkdir -p"* ]]; then
   exit "${SSH_INSTALL_EXIT:-0}"
 fi
 
