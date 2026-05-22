@@ -30,20 +30,22 @@ if [[ ! -x "$BIN" ]]; then
 fi
 
 # Fake ssh shared prelude. SSH_OCREMOTE_PRESENT controls probe behaviour.
-# When the probe is detected (last arg starts with "test -x"), we exit 0 if
-# present, 1 if absent. Otherwise we treat the trailing argv as the call to
-# clawctl-remote and emit one line per arg so the test can assert exact preservation.
+# SSH_OCREMOTE_PRESENT controls probe behaviour (default 0 = absent).
+# SSH_INSTALL_EXIT controls the install call exit code (default 0 = success).
+# When the probe succeeds, we emit the version marker so the Go binary's
+# version check passes and skips the auto-install path.
 write_fake_ssh() {
   cat >"$TMP/ssh" <<'EOF'
 #!/usr/bin/env bash
 # Fake ssh used by test/cli-hardening.sh.
 #
 # Real ssh argv shapes we care about:
-#   ssh -o BatchMode=yes -o ConnectTimeout=5 HOST 'test -x /usr/local/bin/clawctl-remote'
-#   ssh HOST -- /usr/local/bin/clawctl-remote ARG ARG ...
+#   ssh -o BatchMode=yes -o ConnectTimeout=5  HOST 'test -x ... && head -3 ...'
+#   ssh -o BatchMode=yes -o ConnectTimeout=10 HOST 'sudo install -m 0755 /dev/stdin ...'
+#   ssh -o ControlMaster=auto ... HOST -- /usr/local/bin/clawctl-remote ARG ARG ...
 #
 # We strip option flags until we hit the host token, drop a leading `--` if
-# present, then either honour the probe or echo the remaining argv.
+# present, then dispatch on the remaining argv shape.
 
 host=""
 while [ $# -gt 0 ]; do
@@ -56,13 +58,20 @@ done
 
 if [ "${1:-}" = "--" ]; then shift; fi
 
-# Probe form: a single argument beginning with "test -x".
+# Probe form: single argument beginning with "test -x".
+# Emit version marker on success so the Go binary's version check passes.
 if [ "$#" -eq 1 ] && [[ "$1" == "test -x"* ]]; then
   if [ "${SSH_OCREMOTE_PRESENT:-0}" = "1" ]; then
+    printf '#!/usr/bin/env bash\n# clawctl-remote dev\n'
     exit 0
   else
     exit 1
   fi
+fi
+
+# Install form: single argument beginning with "sudo install".
+if [ "$#" -eq 1 ] && [[ "$1" == "sudo install"* ]]; then
+  exit "${SSH_INSTALL_EXIT:-0}"
 fi
 
 # Invocation form: print host + argv, one per line, so callers can diff.
@@ -110,9 +119,9 @@ fi
 # Test 2: clawctl-remote absent → exit 2 + remediation message
 #───────────────────────────────────────────────────────────────────────────────
 
-echo "→ Test 2: clawctl-remote absent, exit 2 with remediation message"
+echo "→ Test 2: clawctl-remote absent + install fails → exit 2 with remediation message"
 set +e
-out=$(SSH_OCREMOTE_PRESENT=0 run_cli agents list 2>&1)
+out=$(SSH_OCREMOTE_PRESENT=0 SSH_INSTALL_EXIT=1 run_cli agents list 2>&1)
 ec=$?
 set -e
 
@@ -122,13 +131,13 @@ else
   fail_ "exit code $ec (expected 2)"
 fi
 
-if [[ "$out" == *"clawctl-remote not found"* ]]; then
-  ok "stderr names the missing binary"
+if [[ "$out" == *"/usr/local/bin/clawctl-remote"* ]]; then
+  ok "stderr names the install path"
 else
-  fail_ "stderr missing 'clawctl-remote not found': $out"
+  fail_ "stderr missing install path: $out"
 fi
 
-if [[ "$out" == *"README.md"* ]] || [[ "$out" == *"install"* ]]; then
+if [[ "$out" == *"install"* ]]; then
   ok "stderr points at install instructions"
 else
   fail_ "stderr lacks install pointer"

@@ -51,9 +51,19 @@ while [ $# -gt 0 ]; do
 done
 if [ "${1:-}" = "--" ]; then shift; fi
 
-# Probe form: a single argument beginning with "test -x".
+# Probe form: single argument beginning with "test -x".
+# On success, emit the version marker so probeClawctlRemote's version check passes.
 if [ "$#" -eq 1 ] && [[ "$1" == "test -x"* ]]; then
-  exit "${OCREMOTE_PROBE_EXIT:-0}"
+  probe_exit="${OCREMOTE_PROBE_EXIT:-0}"
+  if [ "$probe_exit" -eq 0 ]; then
+    printf '#!/usr/bin/env bash\n# clawctl-remote dev\n'
+  fi
+  exit "$probe_exit"
+fi
+
+# Install form: single argument beginning with "sudo install".
+if [ "$#" -eq 1 ] && [[ "$1" == "sudo install"* ]]; then
+  exit "${OCREMOTE_INSTALL_EXIT:-0}"
 fi
 
 # Real-call form: log argv then exit with OCREMOTE_CALL_EXIT.
@@ -207,13 +217,13 @@ func TestRunCLI_NoArgsStillReachesOcRemote(t *testing.T) {
 	}
 }
 
-// TestRunCLI_ExitsWhenOcRemoteMissing covers the US-021 acceptance criterion:
-// when the probe fails (clawctl-remote absent on the host) we must exit 2 with a
-// remediation message naming the install path, and we must NOT proceed to
-// invoke ssh a second time. Mirrors test/cli-hardening.sh test 2.
+// TestRunCLI_ExitsWhenOcRemoteMissing covers the auto-install failure path:
+// when both probe and install fail, runCLI must exit 2 with a remediation
+// message and must NOT proceed to the real SSH call.
 func TestRunCLI_ExitsWhenOcRemoteMissing(t *testing.T) {
 	tmp := installFakeSSH(t)
 	t.Setenv("OCREMOTE_PROBE_EXIT", "1")
+	t.Setenv("OCREMOTE_INSTALL_EXIT", "1")
 
 	var stdout, stderr bytes.Buffer
 	cfg := config.Config{SSHHost: "user@absent.test"}
@@ -225,10 +235,9 @@ func TestRunCLI_ExitsWhenOcRemoteMissing(t *testing.T) {
 
 	msg := stderr.String()
 	for _, want := range []string{
-		"clawctl-remote not found",
+		"could not install clawctl-remote",
 		"/usr/local/bin/clawctl-remote",
 		"user@absent.test",
-		"README.md",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("stderr missing %q\nfull stderr:\n%s", want, msg)
@@ -237,7 +246,7 @@ func TestRunCLI_ExitsWhenOcRemoteMissing(t *testing.T) {
 
 	// The real-call branch must not have run — argv.log should not exist.
 	if got := readArgv(t, tmp); got != nil {
-		t.Errorf("real ssh call happened despite probe failure: argv=%v", got)
+		t.Errorf("real ssh call happened despite install failure: argv=%v", got)
 	}
 }
 

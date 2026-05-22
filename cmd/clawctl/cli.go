@@ -7,59 +7,97 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"strings"
 
 	"github.com/tomstagl/clawctl/internal/config"
 	"github.com/tomstagl/clawctl/internal/logging"
 )
 
-// ocRemotePath is the absolute path to clawctl-remote on the gateway host.
-// The argv-as-slice contract (US-005, mirrored here in US-020) requires this
-// binary be invoked directly via ssh's argv slot — not interpolated into a
-// remote shell string — so spaces, quotes, $, and backticks in argv reach
-// openclaw without being re-parsed by sh.
-const ocRemotePath = "/usr/local/bin/clawctl-remote"
+// defaultRemotePath is the default absolute path to clawctl-remote on the
+// gateway host. Override with CLAWCTL_REMOTE_PATH for hosts where /usr/local/bin
+// is not writable without root (e.g. ~/.local/bin/clawctl-remote).
+const defaultRemotePath = "/usr/local/bin/clawctl-remote"
 
-// probeOcRemote confirms clawctl-remote is installed at the expected path on
-// the host. BatchMode=yes + ConnectTimeout=5 mirror the bash wrapper so an
-// unreachable or unconfigured host fails fast instead of hanging on a TTY
-// password prompt. The probe is sent as one argument because ssh joins
-// trailing argv into a single remote shell command anyway, and that matches
-// `ssh host 'test -x ...'` in the bash version verbatim.
-func probeOcRemote(ctx context.Context, sshHost string) error {
+func resolveRemotePath(cfg config.Config) string {
+	if cfg.RemotePath != "" {
+		return cfg.RemotePath
+	}
+	return defaultRemotePath
+}
+
+// errRemoteStale is returned by probeClawctlRemote when the script is present
+// but carries a different version than the running binary.
+var errRemoteStale = errors.New("clawctl-remote is installed but outdated")
+
+// clawctlRemoteScript returns the versioned shim to install on the gateway
+// host. The version comment in line 2 lets probeClawctlRemote detect whether
+// the installed copy is current without a separate version endpoint.
+func clawctlRemoteScript() string {
+	v := version
+	if v == "" {
+		v = "dev"
+	}
+	return "#!/usr/bin/env bash\n" +
+		"# clawctl-remote " + v + "\n" +
+		"set -euo pipefail\n" +
+		"export PATH=\"$HOME/.npm-global/bin:$PATH\"\n" +
+		"exec openclaw \"$@\"\n"
+}
+
+// probeClawctlRemote checks whether the correct version of clawctl-remote is
+// installed on the host. It reads the first three lines of the script (one
+// SSH round-trip) and checks for the version marker. Returns nil when the
+// installed version matches, errRemoteStale when a different version is
+// present, or a non-nil error when the script is absent entirely.
+func probeClawctlRemote(ctx context.Context, sshHost, remotePath string) error {
+	v := version
+	if v == "" {
+		v = "dev"
+	}
 	cmd := exec.CommandContext(ctx, "ssh",
 		"-o", "BatchMode=yes",
 		"-o", "ConnectTimeout=5",
 		sshHost,
-		"test -x "+ocRemotePath,
+		"test -x "+remotePath+" && head -3 "+remotePath,
 	)
+	out, err := cmd.Output()
+	if err != nil {
+		return err
+	}
+	if !strings.Contains(string(out), "# clawctl-remote "+v) {
+		return errRemoteStale
+	}
+	return nil
+}
+
+// installClawctlRemote pipes the versioned shim to the host via SSH stdin and
+// installs it at remotePath with sudo. Stderr from ssh/sudo is forwarded to
+// the caller so installation failures are diagnosable.
+func installClawctlRemote(ctx context.Context, sshHost, remotePath string, stderr io.Writer) error {
+	cmd := exec.CommandContext(ctx, "ssh",
+		"-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=10",
+		sshHost,
+		"sudo install -m 0755 /dev/stdin "+remotePath,
+	)
+	cmd.Stdin = strings.NewReader(clawctlRemoteScript())
+	cmd.Stderr = stderr
 	return cmd.Run()
 }
 
-// ocRemoteMissingMessage is the remediation block printed to stderr when the
-// probe fails. Kept structurally identical to the bash wrapper's heredoc so
-// users see the same install snippet regardless of which surface they hit.
-func ocRemoteMissingMessage(sshHost string) string {
-	return fmt.Sprintf(`clawctl cli: clawctl-remote not found at %s on %s.
-
-clawctl-remote is required so argv reaches openclaw without shell-string
-interpolation. Install it on the host (see the "clawctl-remote (required for
-clawctl cli)" section in README.md for the full procedure):
+// manualInstallMessage is the remediation block shown when auto-install fails.
+func manualInstallMessage(sshHost, remotePath string) string {
+	return fmt.Sprintf(`
+To install manually:
 
   ssh %s 'sudo install -m 0755 /dev/stdin %s' <<'CLAWCTLREMOTE'
-  #!/usr/bin/env bash
-  set -euo pipefail
-  export PATH="$HOME/.npm-global/bin:$PATH"
-  exec openclaw "$@"
-  CLAWCTLREMOTE
-`, ocRemotePath, sshHost, sshHost, ocRemotePath)
+%sCLAWCTLREMOTE
+`, sshHost, remotePath, clawctlRemoteScript())
 }
 
-// runCLI implements `clawctl cli ARGS...`. Probes for clawctl-remote first;
-// on miss, returns 2 with a remediation message (US-021). On hit, shells out
-// to ssh with ControlMaster=auto and a 10-minute persistence window so
-// subsequent SSH-using subcommands reuse the connection. argv is passed as
-// exec.Command varargs — never concatenated into a shell string — so the
-// host shell never sees argv as text.
+// runCLI implements `clawctl cli ARGS...`. It ensures clawctl-remote is
+// present and current on the host, auto-installing or updating it as needed,
+// then passes argv directly via ssh's exec slot.
 func runCLI(ctx context.Context, cfg config.Config, args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	log := logging.New(cfg.Log, stderr, "cli", logging.TransportSSH)
 	defer func() { code = log.Finish(code) }()
@@ -70,9 +108,19 @@ func runCLI(ctx context.Context, cfg config.Config, args []string, stdin io.Read
 		return 2
 	}
 
-	if err := probeOcRemote(ctx, cfg.SSHHost); err != nil {
-		fmt.Fprint(stderr, ocRemoteMissingMessage(cfg.SSHHost))
-		return 2
+	remotePath := resolveRemotePath(cfg)
+	if err := probeClawctlRemote(ctx, cfg.SSHHost, remotePath); err != nil {
+		action := "installing"
+		if errors.Is(err, errRemoteStale) {
+			action = "updating"
+		}
+		fmt.Fprintf(stderr, "clawctl-remote: %s on %s...\n", action, cfg.SSHHost)
+		if installErr := installClawctlRemote(ctx, cfg.SSHHost, remotePath, stderr); installErr != nil {
+			fmt.Fprintf(stderr, "clawctl cli: could not install clawctl-remote on %s: %v\n", cfg.SSHHost, installErr)
+			fmt.Fprint(stderr, manualInstallMessage(cfg.SSHHost, remotePath))
+			return 2
+		}
+		fmt.Fprintf(stderr, "clawctl-remote installed at %s on %s\n", remotePath, cfg.SSHHost)
 	}
 
 	sshArgs := []string{
@@ -81,7 +129,7 @@ func runCLI(ctx context.Context, cfg config.Config, args []string, stdin io.Read
 		"-o", "ControlPersist=10m",
 		cfg.SSHHost,
 		"--",
-		ocRemotePath,
+		remotePath,
 	}
 	sshArgs = append(sshArgs, args...)
 

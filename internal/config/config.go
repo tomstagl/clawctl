@@ -24,6 +24,7 @@ type Config struct {
 	JaegerUI         string
 	Log              string
 	JSONOutput       bool
+	RemotePath       string
 }
 
 // Defaults returns a Config populated entirely from defaults. Useful for tests
@@ -77,6 +78,9 @@ func Load() Config {
 	}
 	if os.Getenv("CLAWCTL_OUTPUT") == "json" {
 		c.JSONOutput = true
+	}
+	if v := os.Getenv("CLAWCTL_REMOTE_PATH"); v != "" {
+		c.RemotePath = v
 	}
 
 	return c
