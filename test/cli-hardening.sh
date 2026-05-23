@@ -8,7 +8,7 @@
 #      metacharacters end-to-end (verifies the printf %q fallback is gone).
 #
 # Strategy: shadow `ssh` on PATH with a fake that distinguishes the
-# `test -x /usr/local/bin/clawctl-remote` probe from the actual invocation, and
+# `test -x ~/.local/bin/clawctl-remote` probe from the actual invocation, and
 # logs argv to stdout so the test can diff what reached clawctl-remote against
 # what was passed on the clawctl command line.
 #
@@ -42,7 +42,7 @@ write_fake_ssh() {
 # Real ssh argv shapes we care about:
 #   ssh -o BatchMode=yes -o ConnectTimeout=5  HOST 'test -x ... && head -3 ...'
 #   ssh -o BatchMode=yes -o ConnectTimeout=10 HOST 'mkdir -p $(dirname ...) && install -m 0755 /dev/stdin ...'
-#   ssh -o ControlMaster=auto ... HOST -- /usr/local/bin/clawctl-remote ARG ARG ...
+#   ssh -o ControlMaster=auto ... HOST -- ~/.local/bin/clawctl-remote ARG ARG ...
 #
 # We strip option flags until we hit the host token, drop a leading `--` if
 # present, then dispatch on the remaining argv shape.
@@ -106,7 +106,7 @@ out=$(SSH_OCREMOTE_PRESENT=1 run_cli agents list 2>&1) \
 
 if [[ "$out" == *"HOST=example.test"* ]] \
    && [[ "$out" == *"ARGC=3"* ]] \
-   && [[ "$out" == *"ARG=<</usr/local/bin/clawctl-remote>>"* ]] \
+   && [[ "$out" == *"ARG=<<~/.local/bin/clawctl-remote>>"* ]] \
    && [[ "$out" == *"ARG=<<agents>>"* ]] \
    && [[ "$out" == *"ARG=<<list>>"* ]]; then
   ok "argv reached clawctl-remote intact"
@@ -131,7 +131,7 @@ else
   fail_ "exit code $ec (expected 2)"
 fi
 
-if [[ "$out" == *"/usr/local/bin/clawctl-remote"* ]]; then
+if [[ "$out" == *"~/.local/bin/clawctl-remote"* ]]; then
   ok "stderr names the install path"
 else
   fail_ "stderr missing install path: $out"
@@ -164,7 +164,7 @@ else
   printf '%s\n' "$out" | sed 's/^/      /' >&2
 fi
 
-for needle in "ARG=<</usr/local/bin/clawctl-remote>>" \
+for needle in "ARG=<<~/.local/bin/clawctl-remote>>" \
               "ARG=<<msg>>" \
               "ARG=<<${tricky_a}>>" \
               "ARG=<<${tricky_b}>>" \

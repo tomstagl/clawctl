@@ -637,16 +637,17 @@ PY
     # without shell-string interpolation, so callers cannot inject host-side
     # shell metacharacters via argv. There is no fallback path.
     _require_ssh_host
+    _remote_path="${CLAWCTL_REMOTE_PATH:-~/.local/bin/clawctl-remote}"
     if ! ssh -o BatchMode=yes -o ConnectTimeout=5 "$CLAWCTL_SSH_HOST" \
-        'test -x /usr/local/bin/clawctl-remote' 2>/dev/null; then
+        "test -x $_remote_path" 2>/dev/null; then
       cat >&2 <<EOF
-clawctl cli: clawctl-remote not found at /usr/local/bin/clawctl-remote on $CLAWCTL_SSH_HOST.
+clawctl cli: clawctl-remote not found at $_remote_path on $CLAWCTL_SSH_HOST.
 
 clawctl-remote is required so argv reaches openclaw without shell-string
 interpolation. Install it on the host (see the "clawctl-remote (required for
 clawctl cli)" section in README.md for the full procedure):
 
-  ssh $CLAWCTL_SSH_HOST 'sudo install -m 0755 /dev/stdin /usr/local/bin/clawctl-remote' <<'OCREMOTE'
+  ssh $CLAWCTL_SSH_HOST 'mkdir -p \$(dirname $_remote_path) && install -m 0755 /dev/stdin $_remote_path' <<'OCREMOTE'
   #!/usr/bin/env bash
   set -euo pipefail
   export PATH="\$HOME/.npm-global/bin:\$PATH"
@@ -655,7 +656,7 @@ clawctl cli)" section in README.md for the full procedure):
 EOF
       exit 2
     fi
-    ssh "$CLAWCTL_SSH_HOST" -- /usr/local/bin/clawctl-remote "$@"
+    ssh "$CLAWCTL_SSH_HOST" -- "$_remote_path" "$@"
     ;;
 
   verify)

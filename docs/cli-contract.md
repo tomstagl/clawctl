@@ -32,7 +32,7 @@ treat `clawctl` and `curl` interchangeably in shell error-handling logic.
 | Variable              | Default                           | Purpose |
 |-----------------------|-----------------------------------|---------|
 | `CLAWCTL_SSH_HOST`    | _required_                        | SSH target (`user@host`) for the gateway host |
-| `CLAWCTL_REMOTE_PATH` | `/usr/local/bin/clawctl-remote`   | Install path for `clawctl-remote` on the gateway host. Set to a user-writable path (e.g. `~/.local/bin/clawctl-remote`) when the default requires root |
+| `CLAWCTL_REMOTE_PATH` | `~/.local/bin/clawctl-remote`   | Install path for `clawctl-remote` on the gateway host. `~` resolves on the remote, so the default works on both macOS and Linux without root |
 
 ### Stderr vs stdout discipline
 

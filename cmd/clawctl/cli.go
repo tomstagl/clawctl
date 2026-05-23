@@ -13,10 +13,12 @@ import (
 	"github.com/tomstagl/clawctl/internal/logging"
 )
 
-// defaultRemotePath is the default absolute path to clawctl-remote on the
-// gateway host. Override with CLAWCTL_REMOTE_PATH for hosts where /usr/local/bin
-// is not writable without root (e.g. ~/.local/bin/clawctl-remote).
-const defaultRemotePath = "/usr/local/bin/clawctl-remote"
+// defaultRemotePath is the default install path for clawctl-remote on the
+// gateway host. The literal ~ is intentional — it is never expanded locally
+// and reaches the remote shell as-is, where it resolves to the correct home
+// directory regardless of whether the host runs macOS or Linux.
+// Override with CLAWCTL_REMOTE_PATH for non-default locations.
+const defaultRemotePath = "~/.local/bin/clawctl-remote"
 
 func resolveRemotePath(cfg config.Config) string {
 	if cfg.RemotePath != "" {

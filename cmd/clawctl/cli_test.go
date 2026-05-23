@@ -15,7 +15,7 @@ import (
 
 // installFakeSSH writes a recording shim to a tempdir and prepends that
 // dir to PATH for the duration of the test. The shim distinguishes the
-// clawctl-remote probe (`ssh ... 'test -x /usr/local/bin/clawctl-remote'`) from the
+// clawctl-remote probe (`ssh ... 'test -x ~/.local/bin/clawctl-remote'`) from the
 // real invocation by inspecting the trailing argv after option flags and
 // the host token. Probe behaviour is controlled by env vars set by the
 // caller (OCREMOTE_PROBE_EXIT, OCREMOTE_CALL_EXIT) so individual tests can
@@ -132,7 +132,7 @@ func TestRunCLI_PassesControlMasterArgsAndArgv(t *testing.T) {
 		"-o", "ControlPersist=10m",
 		"user@example.test",
 		"--",
-		"/usr/local/bin/clawctl-remote",
+		"~/.local/bin/clawctl-remote",
 		"agents",
 		"list",
 	}
@@ -166,7 +166,7 @@ func TestRunCLI_PreservesSpacesQuotesDollarsBackticks(t *testing.T) {
 	// Locate the clawctl-remote anchor; everything after it is user argv.
 	anchor := -1
 	for i, a := range got {
-		if a == "/usr/local/bin/clawctl-remote" {
+		if a == "~/.local/bin/clawctl-remote" {
 			anchor = i
 			break
 		}
@@ -211,9 +211,9 @@ func TestRunCLI_NoArgsStillReachesOcRemote(t *testing.T) {
 	}
 
 	got := readArgv(t, tmp)
-	// Last token must be /usr/local/bin/clawctl-remote with nothing after it.
-	if len(got) == 0 || got[len(got)-1] != "/usr/local/bin/clawctl-remote" {
-		t.Errorf("argv = %v, want trailing /usr/local/bin/clawctl-remote", got)
+	// Last token must be ~/.local/bin/clawctl-remote with nothing after it.
+	if len(got) == 0 || got[len(got)-1] != "~/.local/bin/clawctl-remote" {
+		t.Errorf("argv = %v, want trailing ~/.local/bin/clawctl-remote", got)
 	}
 }
 
@@ -236,7 +236,7 @@ func TestRunCLI_ExitsWhenOcRemoteMissing(t *testing.T) {
 	msg := stderr.String()
 	for _, want := range []string{
 		"could not install clawctl-remote",
-		"/usr/local/bin/clawctl-remote",
+		"~/.local/bin/clawctl-remote",
 		"user@absent.test",
 	} {
 		if !strings.Contains(msg, want) {
@@ -269,7 +269,7 @@ func TestRunCLI_ProceedsWhenOcRemotePresent(t *testing.T) {
 		t.Fatal("real ssh call did not happen after successful probe")
 	}
 	// Sanity: the recorded argv must end with the expected clawctl-remote slice.
-	tail := []string{"--", "/usr/local/bin/clawctl-remote", "agents", "list"}
+	tail := []string{"--", "~/.local/bin/clawctl-remote", "agents", "list"}
 	if len(got) < len(tail) {
 		t.Fatalf("argv too short: %v", got)
 	}
