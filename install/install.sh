@@ -154,7 +154,38 @@ if installed_ver="$("$TARGET" version 2>/dev/null)"; then
 fi
 
 #───────────────────────────────────────────────────────────────────────────────
-# 6. PATH + setup hints.
+# 6. Install skill to ~/.claude/skills/clawctl/ so Claude Code picks it up
+#    globally in every project. Always fetches from the repo — stays current
+#    without requiring a separate plugin update step.
+#───────────────────────────────────────────────────────────────────────────────
+
+SKILL_DIR="${HOME}/.claude/skills/clawctl"
+SKILL_URL="https://raw.githubusercontent.com/${REPO}/main/skills/clawctl/SKILL.md"
+
+if command -v curl >/dev/null 2>&1; then
+  mkdir -p "$SKILL_DIR"
+  if curl -fsSL --retry 2 --output "$SKILL_DIR/SKILL.md" "$SKILL_URL" 2>/dev/null; then
+    echo "✓ installed clawctl skill to $SKILL_DIR/SKILL.md"
+  else
+    echo "  (skill download failed — run: curl -fsSL $SKILL_URL -o $SKILL_DIR/SKILL.md)"
+  fi
+fi
+
+#───────────────────────────────────────────────────────────────────────────────
+# 7. Register the MCP server globally (requires the claude CLI to be on PATH).
+#    Idempotent: re-running updates an existing registration.
+#───────────────────────────────────────────────────────────────────────────────
+
+if command -v claude >/dev/null 2>&1; then
+  if claude mcp add -s user clawctl -- clawctl mcp 2>/dev/null; then
+    echo "✓ registered clawctl MCP server (user scope)"
+  else
+    echo "  (MCP already registered or could not register — run: claude mcp add -s user clawctl -- clawctl mcp)"
+  fi
+fi
+
+#───────────────────────────────────────────────────────────────────────────────
+# 8. PATH + setup hints.
 #───────────────────────────────────────────────────────────────────────────────
 
 if ! command -v clawctl >/dev/null 2>&1 || [[ "$(command -v clawctl)" != "$TARGET" ]]; then

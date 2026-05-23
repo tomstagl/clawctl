@@ -1,7 +1,7 @@
 {
   "name": "clawctl",
-  "version": "0.2.0",
-  "description": "kubectl-style slash commands and a GitHub loop-back skill for the openclaw agent gateway. Bundled with the clawctl wrapper in the same repo.",
+  "version": "0.2.3",
+  "description": "kubectl-style slash commands, clawctl usage skill, and openclaw loopback skill for the openclaw agent gateway. Bundled with the clawctl wrapper in the same repo.",
   "author": {
     "name": "Thomas Stagl",
     "url": "https://tomstagl.com"
