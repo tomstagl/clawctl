@@ -14,9 +14,13 @@ The wrapper itself never has a `--force` shortcut, an alias for a destructive op
 
 ## 2. No secrets on disk
 
-Bearer tokens live in macOS Keychain (`security add-generic-password`). The wrapper reads them at call time and never persists them anywhere — not env, not config files, not cache.
+Bearer tokens live in the platform credential store. The binary reads them at call time and never persists them anywhere — not env, not config files, not cache.
 
-If a future port targets a non-macOS platform, the equivalent OS keystore (Linux: `secret-tool`; Windows: `cmdkey`) is the bar. Plain-text fallbacks are not acceptable.
+- **macOS**: Keychain via `security find-generic-password` (`internal/keychain/keychain_darwin.go`).
+- **Linux**: `secret-tool` or `pass`, in that order (`internal/keychain/keychain_linux.go`) — both implemented today, not aspirational.
+- **Any platform**: `CLAWCTL_TOKEN_CMD` is honoured first as an explicit override, running an arbitrary command whose stdout is the token.
+
+Plain-text fallbacks and reading a `CLAWCTL_TOKEN` env var are not acceptable. Windows (`cmdkey`) remains a future port.
 
 ## 3. Trace every call
 
@@ -37,6 +41,12 @@ A hit:
 
 ## 5. One binary, zero runtime deps
 
-`clawctl` is one bash file. Hard dependencies: `bash`, `curl`, `openssl`, `security` (macOS Keychain), and a POSIX `perl` (for the redactor — already on macOS). Optional: `jq` for output filtering, `gh` for `clawctl verify`.
+`clawctl` is a single static Go binary (`CGO_ENABLED=0`), built from `cmd/clawctl/`. It carries its own transport, auth, redaction, SSE parsing, and MCP server — nothing is shelled out that can be done in-process.
 
-No npm, no Python venv, no homebrew-only deps beyond what `brew bundle` would install in a fresh shell. If a feature needs a heavier runtime, it lives in a separate repo.
+Runtime dependencies are limited to OS integrations that have no portable Go equivalent, and are reached by shelling out rather than linking CGO:
+
+- `ssh` — only for `clawctl cli` (host-side `openclaw` ops).
+- `security` (macOS) / `secret-tool` or `pass` (Linux) — only for reading the bearer token (principle #2).
+- Optional: `git` and `gh` for `clawctl verify`.
+
+The deprecated `clawctl.bash` original is kept only for parity testing (`test/parity-*.sh`); don't add features to it. If a feature needs a heavier runtime (npm, a Python venv), it lives in a separate repo.

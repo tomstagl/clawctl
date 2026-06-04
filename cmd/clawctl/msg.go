@@ -84,6 +84,9 @@ func runMsg(ctx context.Context, cfg config.Config, args []string, stdin io.Read
 
 	tokenSource := keychainTokenSource(cfg)
 	client := api.New(cfg.Host, cfg.Timeout, tokenSource)
+	if cfg.MaxResponseBytes > 0 {
+		client.MaxResponseBytes = cfg.MaxResponseBytes
+	}
 
 	payload, err := buildChatPayload(agent, text, flags.session, false)
 	if err != nil {
@@ -162,6 +165,7 @@ func runMsg(ctx context.Context, cfg config.Config, args []string, stdin io.Read
 		Kind:            envelope.KindToolResponse,
 		Agent:           "openclaw/" + agent,
 		SessionID:       flags.session,
+		TaskID:          tp.TraceID,
 		Traceparent:     tp.String(),
 		Input:           envelope.Input{Role: "user", Content: text},
 		Output:          r.Text,

@@ -11,6 +11,7 @@ import (
 
 	"github.com/tomstagl/clawctl/internal/config"
 	"github.com/tomstagl/clawctl/internal/logging"
+	"github.com/tomstagl/clawctl/internal/transport/api"
 )
 
 // runTrace implements `clawctl trace <trace-id>`. It mirrors the bash
@@ -107,7 +108,7 @@ func jaegerFetch(ctx context.Context, url string) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
+	return api.ReadLimited(resp.Body, api.DefaultMaxResponseBytes)
 }
 
 // jaegerResponse mirrors the subset of the Jaeger HTTP API the bash python

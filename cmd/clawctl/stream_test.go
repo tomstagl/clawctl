@@ -252,12 +252,13 @@ func TestRunStream_ByteExactNDJSON(t *testing.T) {
 	}
 	tp := probe.Traceparent
 
-	const tpl = `{"envelope_version":"1","kind":"tool_stream_chunk","agent":"openclaw/default","traceparent":"__TP__","index":0,"delta":{"content":"Hello "},"finish_reason":null}
-{"envelope_version":"1","kind":"tool_stream_chunk","agent":"openclaw/default","traceparent":"__TP__","index":1,"delta":{"content":"streamed "},"finish_reason":null}
-{"envelope_version":"1","kind":"tool_stream_chunk","agent":"openclaw/default","traceparent":"__TP__","index":2,"delta":{"content":"world."},"finish_reason":null}
-{"envelope_version":"1","kind":"tool_response","agent":"openclaw/default","traceparent":"__TP__","input":{"role":"user","content":"say hi"},"output":"Hello streamed world.","redactions":[],"usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10},"finish_reason":"stop"}
+	const tpl = `{"envelope_version":"1","kind":"tool_stream_chunk","agent":"openclaw/default","task_id":"__TASK__","traceparent":"__TP__","index":0,"delta":{"content":"Hello "},"finish_reason":null}
+{"envelope_version":"1","kind":"tool_stream_chunk","agent":"openclaw/default","task_id":"__TASK__","traceparent":"__TP__","index":1,"delta":{"content":"streamed "},"finish_reason":null}
+{"envelope_version":"1","kind":"tool_stream_chunk","agent":"openclaw/default","task_id":"__TASK__","traceparent":"__TP__","index":2,"delta":{"content":"world."},"finish_reason":null}
+{"envelope_version":"1","kind":"tool_response","agent":"openclaw/default","task_id":"__TASK__","traceparent":"__TP__","input":{"role":"user","content":"say hi"},"output":"Hello streamed world.","redactions":[],"usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10},"finish_reason":"stop"}
 `
 	want := strings.ReplaceAll(tpl, "__TP__", tp)
+	want = strings.ReplaceAll(want, "__TASK__", probe.TaskID)
 	if got := stdout.String(); got != want {
 		t.Errorf("byte-exact NDJSON mismatch\n got:\n%s\nwant:\n%s", got, want)
 	}
@@ -558,4 +559,40 @@ func splitNDJSON(t *testing.T, b []byte) [][]byte {
 		out = append(out, p)
 	}
 	return out
+}
+
+// TestParseSSEStream_SkippedCountsMalformed verifies that malformed data
+// payloads are counted (so the caller can warn) rather than silently dropped,
+// and that a fully-corrupt stream is distinguishable from a healthy empty one.
+func TestParseSSEStream_SkippedCountsMalformed(t *testing.T) {
+	body := "data: {not valid json\n\n" +
+		"data: also <broken>\n\n" +
+		"data: [DONE]\n\n"
+	res, err := parseSSEStream([]byte(body))
+	if err != nil {
+		t.Fatalf("parseSSEStream: %v", err)
+	}
+	if res.Skipped != 2 {
+		t.Errorf("Skipped = %d, want 2", res.Skipped)
+	}
+	if len(res.Chunks) != 0 {
+		t.Errorf("Chunks = %v, want none", res.Chunks)
+	}
+}
+
+// TestParseSSEStream_CleanStreamNoSkips verifies the counter stays zero for a
+// well-formed stream.
+func TestParseSSEStream_CleanStreamNoSkips(t *testing.T) {
+	body := `data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\n" +
+		"data: [DONE]\n\n"
+	res, err := parseSSEStream([]byte(body))
+	if err != nil {
+		t.Fatalf("parseSSEStream: %v", err)
+	}
+	if res.Skipped != 0 {
+		t.Errorf("Skipped = %d, want 0", res.Skipped)
+	}
+	if len(res.Chunks) != 1 || res.Chunks[0] != "hi" {
+		t.Errorf("Chunks = %v, want [hi]", res.Chunks)
+	}
 }

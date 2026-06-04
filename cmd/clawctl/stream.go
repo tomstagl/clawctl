@@ -77,6 +77,9 @@ func runStream(ctx context.Context, cfg config.Config, args []string, stdin io.R
 
 	tokenSource := keychainTokenSource(cfg)
 	client := api.New(cfg.Host, cfg.Timeout, tokenSource)
+	if cfg.MaxResponseBytes > 0 {
+		client.MaxResponseBytes = cfg.MaxResponseBytes
+	}
 
 	payload, err := buildChatPayload(agent, text, flags.session, true)
 	if err != nil {
@@ -100,6 +103,9 @@ func runStream(ctx context.Context, cfg config.Config, args []string, stdin io.R
 	if perr != nil {
 		fmt.Fprintf(stderr, "clawctl: parse SSE stream: %v\n", perr)
 		return 1
+	}
+	if parsed.Skipped > 0 {
+		fmt.Fprintf(stderr, "clawctl: warning: skipped %d malformed SSE payload(s)\n", parsed.Skipped)
 	}
 	if parsed.Err != "" {
 		fmt.Fprintf(stderr, "clawctl: stream error: %s\n", parsed.Err)
@@ -140,6 +146,7 @@ func runStream(ctx context.Context, cfg config.Config, args []string, stdin io.R
 	emitRedactionStderr(cfg, agent, aggResult.Kinds(), stderr)
 
 	sessionID := flags.session
+	taskID := tp.TraceID
 	agentSlug := "openclaw/" + agent
 
 	if perChunkConcat.String() == aggResult.Text {
@@ -151,6 +158,7 @@ func runStream(ctx context.Context, cfg config.Config, args []string, stdin io.R
 				Kind:            envelope.KindToolStreamChunk,
 				Agent:           agentSlug,
 				SessionID:       sessionID,
+				TaskID:          taskID,
 				Traceparent:     tp.String(),
 				Index:           i,
 				Delta:           envelope.Delta{Content: c.Text},
@@ -174,6 +182,7 @@ func runStream(ctx context.Context, cfg config.Config, args []string, stdin io.R
 			Kind:            envelope.KindToolStreamChunk,
 			Agent:           agentSlug,
 			SessionID:       sessionID,
+			TaskID:          taskID,
 			Traceparent:     tp.String(),
 			Index:           0,
 			Delta:           envelope.Delta{Content: aggResult.Text},
@@ -191,6 +200,7 @@ func runStream(ctx context.Context, cfg config.Config, args []string, stdin io.R
 		Kind:            envelope.KindToolResponse,
 		Agent:           agentSlug,
 		SessionID:       sessionID,
+		TaskID:          taskID,
 		Traceparent:     tp.String(),
 		Input:           envelope.Input{Role: "user", Content: text},
 		Output:          aggResult.Text,
@@ -266,6 +276,11 @@ type streamParseResult struct {
 	FinishReason string
 	Usage        chatUsage
 	Err          string
+	// Skipped counts SSE data payloads that failed to JSON-decode. A fully
+	// corrupt stream otherwise looks identical to a healthy empty response
+	// (no chunks, finish_reason=stop); the caller surfaces a stderr warning
+	// when this is non-zero so the corruption isn't silent.
+	Skipped int
 }
 
 // parseSSEStream consumes the buffered SSE response body and extracts
@@ -318,11 +333,12 @@ func parseSSEStream(body []byte) (streamParseResult, error) {
 			Error json.RawMessage `json:"error"`
 		}
 		if err := json.Unmarshal([]byte(payload), &obj); err != nil {
-			// Skip malformed payloads quietly — the bash python heredoc
-			// does the same. A persistent malformation surfaces as no
-			// chunks and finish_reason=stop, which the caller can
-			// distinguish from a healthy empty response by inspecting
-			// the SSE blob itself.
+			// Skip malformed payloads — the bash python heredoc does the
+			// same — but count them so the caller can warn on stderr. A
+			// persistent malformation would otherwise surface as no chunks
+			// and finish_reason=stop, indistinguishable from a healthy
+			// empty response.
+			res.Skipped++
 			continue
 		}
 		if obj.Usage.PromptTokens != nil {

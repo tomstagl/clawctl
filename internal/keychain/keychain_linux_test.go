@@ -60,6 +60,52 @@ func TestPlatformTokenSecretTool(t *testing.T) {
 	}
 }
 
+// TestPlatformTokenSecretToolFailedSurfacesStderr verifies that when
+// secret-tool is installed but fails, its stderr is surfaced in the error —
+// distinguishing an auth/lookup failure from an uninstalled backend.
+func TestPlatformTokenSecretToolFailedSurfacesStderr(t *testing.T) {
+	bin := t.TempDir()
+	script := filepath.Join(bin, "secret-tool")
+	// Exit non-zero after writing a recognizable message to stderr.
+	if err := os.WriteFile(script, []byte("#!/bin/sh\necho 'keyring is locked' >&2\nexit 1\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("CLAWCTL_TOKEN_CMD", "")
+
+	_, err := platformToken("openclaw-gateway-token", "testuser")
+	if err == nil {
+		t.Fatal("expected error when secret-tool fails")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "keyring is locked") {
+		t.Errorf("error should surface secret-tool stderr; got: %s", msg)
+	}
+	if !strings.Contains(msg, "backend errors") {
+		t.Errorf("error should flag a failing (not merely absent) backend; got: %s", msg)
+	}
+}
+
+// TestPlatformTokenEmptyOutputIsFailure verifies that a backend producing empty
+// output is treated as a failure, not a success returning an empty token.
+func TestPlatformTokenEmptyOutputIsFailure(t *testing.T) {
+	bin := t.TempDir()
+	script := filepath.Join(bin, "secret-tool")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	t.Setenv("CLAWCTL_TOKEN_CMD", "")
+
+	tok, err := platformToken("openclaw-gateway-token", "testuser")
+	if err == nil {
+		t.Fatalf("expected error on empty output, got token %q", tok)
+	}
+	if !strings.Contains(err.Error(), "empty output") {
+		t.Errorf("error should mention empty output; got: %s", err.Error())
+	}
+}
+
 // TestPlatformTokenPassFallback verifies that pass is tried when secret-tool
 // is absent.
 func TestPlatformTokenPassFallback(t *testing.T) {

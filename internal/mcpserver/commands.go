@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -302,7 +301,7 @@ func cmdJaegerFetch(ctx context.Context, rawURL string) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
+	return api.ReadLimited(resp.Body, api.DefaultMaxResponseBytes)
 }
 
 func cmdSpanCount(body []byte) *int {
@@ -341,7 +340,11 @@ func msgTool() *mcp.Tool {
 				},
 				"session_id": map[string]any{
 					"type":        "string",
-					"description": "Optional session key for conversation continuity.",
+					"description": "Optional session key for conversation continuity (A2A contextId).",
+				},
+				"task_id": map[string]any{
+					"type":        "string",
+					"description": "Optional unit-of-work id echoed back on the response envelope (A2A taskId).",
 				},
 				"tool_choice": map[string]any{
 					"type":        "string",
@@ -357,6 +360,7 @@ type cmdMsgArgs struct {
 	Agent      string `json:"agent"`
 	Text       string `json:"text"`
 	SessionID  string `json:"session_id,omitempty"`
+	TaskID     string `json:"task_id,omitempty"`
 	ToolChoice string `json:"tool_choice,omitempty"`
 }
 
@@ -468,6 +472,10 @@ func msgHandler(client *api.Client) mcp.ToolHandler {
 		if args.Text == "" {
 			return cmdErrResult("clawctl_msg", "text is required"), nil
 		}
+		if int64(len(args.Text)) > api.DefaultMaxResponseBytes {
+			return cmdErrResult("clawctl_msg", fmt.Sprintf(
+				"text exceeds %d-byte limit", api.DefaultMaxResponseBytes)), nil
+		}
 
 		payload, err := cmdMsgBuildPayload(args.Agent, args.Text, args.SessionID)
 		if err != nil {
@@ -498,6 +506,7 @@ func msgHandler(client *api.Client) mcp.ToolHandler {
 			Kind:            envelope.KindToolResponse,
 			Agent:           "openclaw/" + args.Agent,
 			SessionID:       args.SessionID,
+			TaskID:          args.TaskID,
 			Input:           envelope.Input{Role: "user", Content: args.Text},
 			Output:          r.Text,
 			Redactions:      cmdMsgToEnvelopeRedactions(r.Hits),

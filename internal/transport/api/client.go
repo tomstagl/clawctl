@@ -31,6 +31,13 @@ import (
 // (e.g. /health) need not hit the Keychain.
 type TokenSource func() (string, error)
 
+// DefaultMaxResponseBytes caps how much of any single HTTP response body the
+// client buffers into memory. The gateway's /v1/* surface returns small JSON
+// (model lists, chat completions); a multi-gigabyte body is a misconfigured or
+// hostile peer, not a legitimate response. Callers that genuinely need more can
+// raise Client.MaxResponseBytes (CLAWCTL_MAX_RESPONSE_BYTES at the CLI layer).
+const DefaultMaxResponseBytes int64 = 10 << 20 // 10 MiB
+
 // Client is the openclaw gateway REST client.
 type Client struct {
 	Host    string
@@ -43,21 +50,62 @@ type Client struct {
 	// --retry 2 means up to 3 total attempts.
 	Retries    int
 	RetryDelay time.Duration
+
+	// MaxResponseBytes bounds the in-memory size of a single response body.
+	// Zero or negative means unbounded (io.ReadAll); New seeds the default.
+	MaxResponseBytes int64
 }
 
 // New constructs a Client with the documented retry/timeout defaults.
+//
+// Note: HTTP.Timeout is a single deadline covering DNS, dial, TLS, and the
+// full body read — a large-but-valid response arriving slowly can therefore
+// trip the timeout (exit 28) the same way curl --max-time does. Read-only
+// metadata paths (e.g. models) fail open via the cache, so this is acceptable.
 func New(host string, timeout time.Duration, token TokenSource) *Client {
 	if timeout <= 0 {
 		timeout = 60 * time.Second
 	}
 	return &Client{
-		Host:       strings.TrimRight(host, "/"),
-		Token:      token,
-		Timeout:    timeout,
-		HTTP:       &http.Client{Timeout: timeout},
-		Retries:    2,
-		RetryDelay: time.Second,
+		Host:             strings.TrimRight(host, "/"),
+		Token:            token,
+		Timeout:          timeout,
+		HTTP:             &http.Client{Timeout: timeout},
+		Retries:          2,
+		RetryDelay:       time.Second,
+		MaxResponseBytes: DefaultMaxResponseBytes,
 	}
+}
+
+// ResponseTooLargeError means a response body exceeded the configured cap.
+// It maps to exit 22 (an HTTP-level failure) so the caller treats an
+// oversized body the same as any other bad gateway response.
+type ResponseTooLargeError struct {
+	Limit int64
+}
+
+func (e *ResponseTooLargeError) Error() string {
+	return fmt.Sprintf("response body exceeded %d-byte limit", e.Limit)
+}
+
+// ReadLimited reads from r up to limit bytes, returning a ResponseTooLargeError
+// if the source has more. A non-positive limit reads without bound. It is
+// exported so non-Client HTTP paths (e.g. the best-effort Jaeger fetches) can
+// apply the same ceiling.
+func ReadLimited(r io.Reader, limit int64) ([]byte, error) {
+	if limit <= 0 {
+		return io.ReadAll(r)
+	}
+	// Read one byte past the limit so we can distinguish "exactly at limit"
+	// from "overflowed".
+	b, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(b)) > limit {
+		return nil, &ResponseTooLargeError{Limit: limit}
+	}
+	return b, nil
 }
 
 // DNSError means name resolution failed; maps to exit 6.
@@ -120,6 +168,10 @@ func ExitCode(err error) int {
 	}
 	var httpErr *HTTPError
 	if errors.As(err, &httpErr) {
+		return 22
+	}
+	var tooLarge *ResponseTooLargeError
+	if errors.As(err, &tooLarge) {
 		return 22
 	}
 	var toErr *TimeoutError
@@ -251,8 +303,12 @@ func (c *Client) doRequest(ctx context.Context, endpoint, token string, req Requ
 	}
 	defer resp.Body.Close()
 
-	body, readErr := io.ReadAll(resp.Body)
+	body, readErr := ReadLimited(resp.Body, c.MaxResponseBytes)
 	if readErr != nil {
+		var tooLarge *ResponseTooLargeError
+		if errors.As(readErr, &tooLarge) {
+			return nil, readErr
+		}
 		return nil, classifyTransportErr(readErr, endpoint, c.Timeout)
 	}
 	if resp.StatusCode >= 400 {

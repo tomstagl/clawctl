@@ -209,6 +209,7 @@ func TestExitCodeMapping(t *testing.T) {
 		{&DNSError{Host: "x"}, 6},
 		{&ConnRefusedError{Host: "x"}, 7},
 		{&HTTPError{StatusCode: 500}, 22},
+		{&ResponseTooLargeError{Limit: 1024}, 22},
 		{&TimeoutError{Host: "x", Timeout: time.Second}, 28},
 		{fmt.Errorf("unknown"), 1},
 	}
@@ -216,5 +217,59 @@ func TestExitCodeMapping(t *testing.T) {
 		if got := ExitCode(tc.err); got != tc.want {
 			t.Errorf("ExitCode(%v) = %d, want %d", tc.err, got, tc.want)
 		}
+	}
+}
+
+func TestReadLimited(t *testing.T) {
+	t.Run("under limit", func(t *testing.T) {
+		b, err := ReadLimited(strings.NewReader("hello"), 10)
+		if err != nil {
+			t.Fatalf("ReadLimited: %v", err)
+		}
+		if string(b) != "hello" {
+			t.Errorf("body = %q", b)
+		}
+	})
+	t.Run("exactly at limit", func(t *testing.T) {
+		b, err := ReadLimited(strings.NewReader("hello"), 5)
+		if err != nil {
+			t.Fatalf("ReadLimited at boundary: %v", err)
+		}
+		if string(b) != "hello" {
+			t.Errorf("body = %q", b)
+		}
+	})
+	t.Run("over limit", func(t *testing.T) {
+		_, err := ReadLimited(strings.NewReader("hello world"), 5)
+		var tooLarge *ResponseTooLargeError
+		if !errors.As(err, &tooLarge) {
+			t.Fatalf("err = %v, want ResponseTooLargeError", err)
+		}
+	})
+	t.Run("zero limit is unbounded", func(t *testing.T) {
+		b, err := ReadLimited(strings.NewReader("hello world"), 0)
+		if err != nil || string(b) != "hello world" {
+			t.Fatalf("ReadLimited unbounded: body=%q err=%v", b, err)
+		}
+	})
+}
+
+// TestDo_ResponseTooLarge asserts that a body exceeding MaxResponseBytes is
+// rejected with a typed error mapping to exit 22, rather than buffered whole.
+func TestDo_ResponseTooLarge(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(strings.Repeat("A", 4096)))
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, 5*time.Second, nil)
+	c.MaxResponseBytes = 1024
+	_, err := c.Get(context.Background(), "/health", false)
+	var tooLarge *ResponseTooLargeError
+	if !errors.As(err, &tooLarge) {
+		t.Fatalf("err = %v, want ResponseTooLargeError", err)
+	}
+	if got := ExitCode(err); got != 22 {
+		t.Errorf("ExitCode = %d, want 22", got)
 	}
 }

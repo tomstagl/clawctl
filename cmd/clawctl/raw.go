@@ -90,6 +90,9 @@ func runRaw(ctx context.Context, cfg config.Config, args []string, stdout, stder
 
 	tokenSource := keychainTokenSource(cfg)
 	client := api.New(cfg.Host, cfg.Timeout, tokenSource)
+	if cfg.MaxResponseBytes > 0 {
+		client.MaxResponseBytes = cfg.MaxResponseBytes
+	}
 
 	respBody, err := client.Do(ctx, api.Request{
 		Method:      method,

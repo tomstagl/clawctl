@@ -28,11 +28,15 @@ const AgentPrefix = "openclaw/"
 
 // Agent is the per-tool metadata extracted from a /v1/models entry. Only
 // id is required — the gateway's response is OpenAI-compatible and may
-// not include description/owner, so those stay optional.
+// not include description/owner/capabilities, so those stay optional. The
+// shape doubles as a minimal A2A-style "agent card": id is the addressable
+// name, description is the human summary, and Capabilities enumerates the
+// skills the agent advertises (when the gateway publishes them).
 type Agent struct {
-	ID          string // full slug, e.g. "openclaw/concierge"
-	Description string // human-readable description, may be empty
-	OwnedBy     string // gateway-reported owner, may be empty
+	ID           string   // full slug, e.g. "openclaw/concierge"
+	Description  string   // human-readable description, may be empty
+	OwnedBy      string   // gateway-reported owner, may be empty
+	Capabilities []string // advertised skills/capabilities, may be empty
 }
 
 // Slug returns the bare slug after stripping AgentPrefix. The MCP tool
@@ -53,9 +57,12 @@ func (a Agent) Slug() string {
 func ParseModels(body []byte) ([]Agent, error) {
 	var resp struct {
 		Data []struct {
-			ID          string `json:"id"`
-			Description string `json:"description"`
-			OwnedBy     string `json:"owned_by"`
+			ID           string   `json:"id"`
+			Description  string   `json:"description"`
+			OwnedBy      string   `json:"owned_by"`
+			Capabilities []string `json:"capabilities"`
+			// Some gateways publish the same data under "skills"; accept either.
+			Skills []string `json:"skills"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
@@ -66,10 +73,15 @@ func ParseModels(body []byte) ([]Agent, error) {
 		if m.ID == "" || !strings.HasPrefix(m.ID, AgentPrefix) {
 			continue
 		}
+		caps := m.Capabilities
+		if len(caps) == 0 {
+			caps = m.Skills
+		}
 		out = append(out, Agent{
-			ID:          m.ID,
-			Description: m.Description,
-			OwnedBy:     m.OwnedBy,
+			ID:           m.ID,
+			Description:  m.Description,
+			OwnedBy:      m.OwnedBy,
+			Capabilities: caps,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
@@ -139,14 +151,31 @@ func buildTool(a Agent, call CallHandler) (*mcp.Tool, mcp.ToolHandler) {
 // names the slug verbatim so callers can still cite the underlying
 // agent in tool-routing prompts.
 func toolDescription(a Agent) string {
-	if d := strings.TrimSpace(a.Description); d != "" {
-		return d
+	base := strings.TrimSpace(a.Description)
+	if base == "" {
+		owner := strings.TrimSpace(a.OwnedBy)
+		if owner == "" {
+			owner = "openclaw"
+		}
+		base = fmt.Sprintf("openclaw agent %q (owned by %s). Invoke with a text prompt; optional session_id resumes a prior conversation, optional tool_choice hints the agent about sub-tool routing.", a.ID, owner)
 	}
-	owner := strings.TrimSpace(a.OwnedBy)
-	if owner == "" {
-		owner = "openclaw"
+	// Append advertised capabilities (A2A agent-card "skills") so a routing
+	// LLM can pick the right agent from tools/list without a second call.
+	if caps := nonEmpty(a.Capabilities); len(caps) > 0 {
+		base += " Capabilities: " + strings.Join(caps, ", ") + "."
 	}
-	return fmt.Sprintf("openclaw agent %q (owned by %s). Invoke with a text prompt; optional session_id resumes a prior conversation, optional tool_choice hints the agent about sub-tool routing.", a.ID, owner)
+	return base
+}
+
+// nonEmpty returns the trimmed, non-blank entries of in, preserving order.
+func nonEmpty(in []string) []string {
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if t := strings.TrimSpace(s); t != "" {
+			out = append(out, t)
+		}
+	}
+	return out
 }
 
 // inputSchema mirrors the v1 envelope's Input shape: a required text

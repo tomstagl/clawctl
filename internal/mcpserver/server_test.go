@@ -64,6 +64,47 @@ func TestToolDescription_FallbackNamesAgent(t *testing.T) {
 	}
 }
 
+// TestToolDescription_AppendsCapabilities verifies advertised capabilities are
+// surfaced in the tool description (A2A agent-card "skills"), and that blank
+// entries are dropped.
+func TestToolDescription_AppendsCapabilities(t *testing.T) {
+	got := toolDescription(Agent{
+		ID:           "openclaw/concierge",
+		Description:  "routes requests",
+		Capabilities: []string{"triage", "  ", "handoff"},
+	})
+	if !strings.Contains(got, "Capabilities: triage, handoff.") {
+		t.Errorf("description should list non-blank capabilities; got %q", got)
+	}
+}
+
+// TestParseModels_ParsesCapabilities verifies both the "capabilities" key and
+// the "skills" fallback populate Agent.Capabilities.
+func TestParseModels_ParsesCapabilities(t *testing.T) {
+	body := []byte(`{"data":[
+		{"id":"openclaw/a","capabilities":["x","y"]},
+		{"id":"openclaw/b","skills":["z"]},
+		{"id":"openclaw/c"}
+	]}`)
+	got, err := ParseModels(body)
+	if err != nil {
+		t.Fatalf("ParseModels: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("got %d agents, want 3", len(got))
+	}
+	// Sorted by ID: a, b, c.
+	if len(got[0].Capabilities) != 2 || got[0].Capabilities[0] != "x" {
+		t.Errorf("a.Capabilities = %v, want [x y]", got[0].Capabilities)
+	}
+	if len(got[1].Capabilities) != 1 || got[1].Capabilities[0] != "z" {
+		t.Errorf("b.Capabilities (skills fallback) = %v, want [z]", got[1].Capabilities)
+	}
+	if len(got[2].Capabilities) != 0 {
+		t.Errorf("c.Capabilities = %v, want empty", got[2].Capabilities)
+	}
+}
+
 func TestInputSchema_MirrorsEnvelopeShape(t *testing.T) {
 	schema := inputSchema()
 	if schema["type"] != "object" {

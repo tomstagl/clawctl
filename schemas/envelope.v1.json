@@ -38,6 +38,13 @@
       "description": "Optional opaque conversation handle. Servers MAY ignore it for stateless calls."
     },
 
+    "TaskId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "description": "Optional unit-of-work identifier, aligned with the A2A 'taskId' concept. Groups the request, its streaming chunks, and its terminal response under one task. When the caller omits it, clawctl derives a stable default from the call's trace-id so every emitted envelope still carries one. session_id (A2A 'contextId') groups multiple tasks in a conversation; task_id scopes a single call."
+    },
+
     "ToolChoice": {
       "type": "string",
       "enum": ["auto", "none", "required"],
@@ -148,6 +155,7 @@
         "kind": { "type": "string", "const": "tool_request" },
         "agent": { "$ref": "#/$defs/AgentSlug" },
         "session_id": { "$ref": "#/$defs/SessionId" },
+        "task_id": { "$ref": "#/$defs/TaskId" },
         "traceparent": { "$ref": "#/$defs/Traceparent" },
         "input": { "$ref": "#/$defs/Input" },
         "tool_choice": { "$ref": "#/$defs/ToolChoice" }
@@ -173,6 +181,7 @@
         "kind": { "type": "string", "const": "tool_response" },
         "agent": { "$ref": "#/$defs/AgentSlug" },
         "session_id": { "$ref": "#/$defs/SessionId" },
+        "task_id": { "$ref": "#/$defs/TaskId" },
         "traceparent": { "$ref": "#/$defs/Traceparent" },
         "input": { "$ref": "#/$defs/Input" },
         "tool_choice": { "$ref": "#/$defs/ToolChoice" },
@@ -206,6 +215,7 @@
         "kind": { "type": "string", "const": "tool_stream_chunk" },
         "agent": { "$ref": "#/$defs/AgentSlug" },
         "session_id": { "$ref": "#/$defs/SessionId" },
+        "task_id": { "$ref": "#/$defs/TaskId" },
         "traceparent": { "$ref": "#/$defs/Traceparent" },
         "index": {
           "type": "integer",
@@ -245,6 +255,7 @@
         "kind": { "type": "string", "const": "tool_error" },
         "agent": { "$ref": "#/$defs/AgentSlug" },
         "session_id": { "$ref": "#/$defs/SessionId" },
+        "task_id": { "$ref": "#/$defs/TaskId" },
         "traceparent": { "$ref": "#/$defs/Traceparent" },
         "code": { "$ref": "#/$defs/ErrorCode" },
         "message": {

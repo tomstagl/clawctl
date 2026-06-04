@@ -131,7 +131,8 @@ Optional inputs for `clawctl_msg`:
 | --- | --- | --- |
 | `agent` | string (required) | openclaw agent slug, e.g. `concierge` |
 | `text` | string (required) | Prompt text to send |
-| `session_id` | string | Resumes a prior conversation by the same session key |
+| `session_id` | string | Resumes a prior conversation by the same session key (A2A `contextId`) |
+| `task_id` | string | Optional unit-of-work id echoed back on the response envelope (A2A `taskId`); see `docs/agent-protocol.md` |
 | `tool_choice` | `auto` \| `none` \| `required` | Hints to the agent about sub-tool routing |
 
 ### Errors

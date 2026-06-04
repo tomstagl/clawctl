@@ -45,6 +45,9 @@ func runModels(ctx context.Context, cfg config.Config, stdout, stderr io.Writer)
 	cachePath := filepath.Join(cfg.CacheDir, "models.json")
 	tokenSource := keychainTokenSource(cfg)
 	client := api.New(cfg.Host, cfg.Timeout, tokenSource)
+	if cfg.MaxResponseBytes > 0 {
+		client.MaxResponseBytes = cfg.MaxResponseBytes
+	}
 
 	body, err := cache.Get(cachePath, cfg.ModelsTTL, func() ([]byte, error) {
 		return client.Get(ctx, "/v1/models", true)
