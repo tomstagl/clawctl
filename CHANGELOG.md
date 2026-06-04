@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.3.0
+
+Robustness hardening, doc-drift fixes, and incremental alignment of the tool envelope with the A2A (Agent2Agent) standard.
+
+### Robustness
+
+- All HTTP response bodies are now bounded (`internal/transport/api.ReadLimited` + `CLAWCTL_MAX_RESPONSE_BYTES`, default 10 MiB). Oversized bodies map to exit 22 instead of exhausting memory; applied to the gateway client and both best-effort Jaeger fetches.
+- The MCP `clawctl_msg` tool rejects oversized prompts before any network call.
+- The Linux keychain backend distinguishes "tool not installed" from "tool ran but failed", surfacing the failing backend's stderr instead of a generic three-option hint.
+- Malformed SSE `data:` payloads are counted and reported on stderr, so a corrupt stream is no longer indistinguishable from a healthy empty response.
+
+### Incremental A2A alignment
+
+- New additive v1 envelope field `task_id` (A2A `taskId`) on all envelope members. `msg`/`stream` derive it from the call's trace-id when omitted; the MCP `clawctl_msg` tool accepts and echoes it. Emitters still validate against the v1 schema.
+- `/v1/models` parsing now reads `capabilities`/`skills` into a minimal agent card and surfaces them in the agent tool description for routing. Fails open when absent.
+- New `docs/agent-protocol.md` records clawctl's protocol position: the three surfaces (MCP / inference / GitHub loop-back), the A2A↔clawctl concept map, and an SSH-side push-notification seam (design only).
+
+### Documentation
+
+- `docs/design-principles.md` (#2/#5) and `CLAUDE.md` now describe the static Go binary and the implemented Linux keychain backend (previously "one bash file / macOS-only").
+- Clarified that "fails open" refers to the models cache layer, not MCP slug validation.
+- Documented `CLAWCTL_MAX_RESPONSE_BYTES` and the single-deadline HTTP timeout behavior.
+
 ## v0.1.0
 
 Initial production release of `clawctl` — a typed Go binary wrapping the openclaw gateway's OpenAI-compatible HTTP API plus a host-side ops CLI over SSH.
