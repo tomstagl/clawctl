@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/tomstagl/clawctl/internal/config"
 )
@@ -197,6 +198,30 @@ func TestRunCLI_ForwardsExitCode(t *testing.T) {
 	code := runCLI(context.Background(), cfg, []string{"agents", "list"}, nil, &stdout, &stderr)
 	if code != 7 {
 		t.Errorf("exit = %d, want 7 (passthrough)", code)
+	}
+}
+
+// TestRunCLI_ContextCancelledAborts verifies that a cancelled context makes
+// runCLI abort with a non-zero exit promptly rather than hanging — the SSH
+// exec inherits the context, so a cancelled probe/call must not block.
+func TestRunCLI_ContextCancelledAborts(t *testing.T) {
+	installFakeSSH(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel before any SSH process can start
+
+	done := make(chan int, 1)
+	var stdout, stderr bytes.Buffer
+	cfg := config.Config{SSHHost: "user@example.test"}
+	go func() {
+		done <- runCLI(ctx, cfg, []string{"agents", "list"}, nil, &stdout, &stderr)
+	}()
+	select {
+	case code := <-done:
+		if code == 0 {
+			t.Errorf("exit = 0, want non-zero on cancelled context; stderr=%s", stderr.String())
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("runCLI did not return within 5s on a cancelled context")
 	}
 }
 

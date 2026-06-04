@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -302,7 +301,7 @@ func cmdJaegerFetch(ctx context.Context, rawURL string) ([]byte, error) {
 		return nil, err
 	}
 	defer resp.Body.Close()
-	return io.ReadAll(resp.Body)
+	return api.ReadLimited(resp.Body, api.DefaultMaxResponseBytes)
 }
 
 func cmdSpanCount(body []byte) *int {
@@ -467,6 +466,10 @@ func msgHandler(client *api.Client) mcp.ToolHandler {
 		}
 		if args.Text == "" {
 			return cmdErrResult("clawctl_msg", "text is required"), nil
+		}
+		if int64(len(args.Text)) > api.DefaultMaxResponseBytes {
+			return cmdErrResult("clawctl_msg", fmt.Sprintf(
+				"text exceeds %d-byte limit", api.DefaultMaxResponseBytes)), nil
 		}
 
 		payload, err := cmdMsgBuildPayload(args.Agent, args.Text, args.SessionID)

@@ -379,6 +379,41 @@ func TestCommandServer_Msg_HappyPath(t *testing.T) {
 	}
 }
 
+// TestCommandServer_Msg_OversizedText asserts the msg tool rejects a prompt
+// larger than the size cap before making any network call.
+func TestCommandServer_Msg_OversizedText(t *testing.T) {
+	var hit bool
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hit = true
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer backend.Close()
+
+	srv, err := BuildCommandServer(nil, stubSrc("tok"), backend.URL, "")
+	if err != nil {
+		t.Fatalf("BuildCommandServer: %v", err)
+	}
+	cs := connect(t, srv)
+	big := strings.Repeat("a", int(api.DefaultMaxResponseBytes)+1)
+	res, err := cs.CallTool(context.Background(), &mcp.CallToolParams{
+		Name:      "clawctl_msg",
+		Arguments: map[string]any{"agent": "concierge", "text": big},
+	})
+	if err != nil {
+		t.Fatalf("CallTool: %v", err)
+	}
+	if !res.IsError {
+		t.Errorf("IsError = false, want true for oversized text")
+	}
+	tc := requireTextContent(t, res)
+	if !strings.Contains(tc.Text, "limit") {
+		t.Errorf("error result = %q, want size-limit message", tc.Text)
+	}
+	if hit {
+		t.Errorf("backend was called; oversized text should be rejected locally")
+	}
+}
+
 func TestCommandServer_Msg_Error(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)

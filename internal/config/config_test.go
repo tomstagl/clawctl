@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/tomstagl/clawctl/internal/transport/api"
 )
 
 func TestDefaults(t *testing.T) {
@@ -23,6 +25,33 @@ func TestDefaults(t *testing.T) {
 	if !filepath.IsAbs(d.CacheDir) {
 		t.Errorf("CacheDir default = %q, want absolute path", d.CacheDir)
 	}
+	if d.MaxResponseBytes != api.DefaultMaxResponseBytes {
+		t.Errorf("MaxResponseBytes default = %d, want %d", d.MaxResponseBytes, api.DefaultMaxResponseBytes)
+	}
+}
+
+func TestLoadMaxResponseBytes(t *testing.T) {
+	t.Run("valid override", func(t *testing.T) {
+		t.Setenv("CLAWCTL_MAX_RESPONSE_BYTES", "2048")
+		c := Load()
+		if c.MaxResponseBytes != 2048 {
+			t.Errorf("MaxResponseBytes = %d, want 2048", c.MaxResponseBytes)
+		}
+	})
+	t.Run("invalid falls back to default", func(t *testing.T) {
+		t.Setenv("CLAWCTL_MAX_RESPONSE_BYTES", "not-a-number")
+		c := Load()
+		if c.MaxResponseBytes != api.DefaultMaxResponseBytes {
+			t.Errorf("MaxResponseBytes = %d, want default %d", c.MaxResponseBytes, api.DefaultMaxResponseBytes)
+		}
+	})
+	t.Run("non-positive falls back to default", func(t *testing.T) {
+		t.Setenv("CLAWCTL_MAX_RESPONSE_BYTES", "0")
+		c := Load()
+		if c.MaxResponseBytes != api.DefaultMaxResponseBytes {
+			t.Errorf("MaxResponseBytes = %d, want default %d", c.MaxResponseBytes, api.DefaultMaxResponseBytes)
+		}
+	})
 }
 
 func TestLoadOverrides(t *testing.T) {

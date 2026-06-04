@@ -59,10 +59,11 @@ Optional knobs — sensible defaults exist:
 | `CLAWCTL_SSH_HOST`          | _unset_                  | SSH target for `clawctl cli`                               |
 | `CLAWCTL_REMOTE_PATH`       | `~/.local/bin/clawctl-remote` | Install path for `clawctl-remote` on the gateway host; `~` expands on the remote |
 | `CLAWCTL_TOKEN_CMD`         | _unset_                  | Shell command that prints the bearer token                 |
-| `CLAWCTL_KEYCHAIN_SERVICE`  | `openclaw-gateway-token` | macOS Keychain entry name                                  |
+| `CLAWCTL_KEYCHAIN_SERVICE`  | `openclaw-gateway-token` | Credential-store entry name (macOS Keychain / Linux secret-tool service) |
 | `CLAWCTL_TIMEOUT`           | `60`                     | Per-call timeout (seconds)                                 |
 | `CLAWCTL_CACHE_DIR`         | `~/.cache/clawctl`       | Models cache + redaction audit                             |
 | `CLAWCTL_MODELS_TTL`        | `60`                     | `clawctl models` cache TTL (seconds)                       |
+| `CLAWCTL_MAX_RESPONSE_BYTES`| `10485760` (10 MiB)      | Max HTTP response body buffered in memory; oversize → exit 22 |
 | `CLAWCTL_NO_REDACT`         | `0`                      | Set to `1` to bypass redaction (debug only)                |
 | `CLAWCTL_JAEGER_UI`         | _unset_                  | Used by `clawctl trace` to print a working UI link         |
 

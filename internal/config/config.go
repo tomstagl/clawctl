@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"time"
+
+	"github.com/tomstagl/clawctl/internal/transport/api"
 )
 
 // Config holds the resolved runtime configuration. Empty strings indicate
@@ -25,6 +27,7 @@ type Config struct {
 	Log              string
 	JSONOutput       bool
 	RemotePath       string
+	MaxResponseBytes int64
 }
 
 // Defaults returns a Config populated entirely from defaults. Useful for tests
@@ -32,10 +35,11 @@ type Config struct {
 func Defaults() Config {
 	home, _ := os.UserHomeDir()
 	return Config{
-		KeychainService: "openclaw-gateway-token",
-		CacheDir:        filepath.Join(home, ".cache", "clawctl"),
-		Timeout:         60 * time.Second,
-		ModelsTTL:       60 * time.Second,
+		KeychainService:  "openclaw-gateway-token",
+		CacheDir:         filepath.Join(home, ".cache", "clawctl"),
+		Timeout:          60 * time.Second,
+		ModelsTTL:        60 * time.Second,
+		MaxResponseBytes: api.DefaultMaxResponseBytes,
 	}
 }
 
@@ -81,6 +85,11 @@ func Load() Config {
 	}
 	if v := os.Getenv("CLAWCTL_REMOTE_PATH"); v != "" {
 		c.RemotePath = v
+	}
+	if v := os.Getenv("CLAWCTL_MAX_RESPONSE_BYTES"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			c.MaxResponseBytes = n
+		}
 	}
 
 	return c
