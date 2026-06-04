@@ -146,6 +146,7 @@ func runStream(ctx context.Context, cfg config.Config, args []string, stdin io.R
 	emitRedactionStderr(cfg, agent, aggResult.Kinds(), stderr)
 
 	sessionID := flags.session
+	taskID := tp.TraceID
 	agentSlug := "openclaw/" + agent
 
 	if perChunkConcat.String() == aggResult.Text {
@@ -157,6 +158,7 @@ func runStream(ctx context.Context, cfg config.Config, args []string, stdin io.R
 				Kind:            envelope.KindToolStreamChunk,
 				Agent:           agentSlug,
 				SessionID:       sessionID,
+				TaskID:          taskID,
 				Traceparent:     tp.String(),
 				Index:           i,
 				Delta:           envelope.Delta{Content: c.Text},
@@ -180,6 +182,7 @@ func runStream(ctx context.Context, cfg config.Config, args []string, stdin io.R
 			Kind:            envelope.KindToolStreamChunk,
 			Agent:           agentSlug,
 			SessionID:       sessionID,
+			TaskID:          taskID,
 			Traceparent:     tp.String(),
 			Index:           0,
 			Delta:           envelope.Delta{Content: aggResult.Text},
@@ -197,6 +200,7 @@ func runStream(ctx context.Context, cfg config.Config, args []string, stdin io.R
 		Kind:            envelope.KindToolResponse,
 		Agent:           agentSlug,
 		SessionID:       sessionID,
+		TaskID:          taskID,
 		Traceparent:     tp.String(),
 		Input:           envelope.Input{Role: "user", Content: text},
 		Output:          aggResult.Text,

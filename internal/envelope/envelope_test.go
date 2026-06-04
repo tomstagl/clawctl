@@ -100,6 +100,37 @@ func TestValidateStructToolResponse(t *testing.T) {
 	}
 }
 
+// TestValidateStructWithTaskID asserts the additive A2A-aligned task_id field
+// validates against the v1 schema on both the response and stream-chunk shapes.
+func TestValidateStructWithTaskID(t *testing.T) {
+	resp := envelope.ToolResponse{
+		EnvelopeVersion: envelope.Version,
+		Kind:            envelope.KindToolResponse,
+		Agent:           "openclaw/concierge",
+		TaskID:          "4bf92f3577b34da6a3ce929d0e0e4736",
+		Traceparent:     "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+		Input:           envelope.Input{Role: "user", Content: "hello"},
+		Redactions:      []envelope.Redaction{},
+		Usage:           envelope.Usage{},
+		FinishReason:    "stop",
+	}
+	if err := envelope.Validate(resp); err != nil {
+		t.Fatalf("ToolResponse with task_id: %v", err)
+	}
+	chunk := envelope.ToolStreamChunk{
+		EnvelopeVersion: envelope.Version,
+		Kind:            envelope.KindToolStreamChunk,
+		Agent:           "openclaw/concierge",
+		TaskID:          "4bf92f3577b34da6a3ce929d0e0e4736",
+		Traceparent:     "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+		Index:           0,
+		Delta:           envelope.Delta{Content: "hi"},
+	}
+	if err := envelope.Validate(chunk); err != nil {
+		t.Fatalf("ToolStreamChunk with task_id: %v", err)
+	}
+}
+
 func TestValidateStructToolStreamChunk(t *testing.T) {
 	chunk := envelope.ToolStreamChunk{
 		EnvelopeVersion: envelope.Version,

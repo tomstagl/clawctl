@@ -19,7 +19,7 @@ Every member carries:
 - `agent` — the gateway's published agent slug (validated against `/v1/models` when the cache is reachable).
 - `traceparent` — W3C traceparent header. Required so callers can cite a trace-id (design principle 3) instead of dumping bodies.
 
-Optional fields (`session_id`, `tool_choice`) are documented in the schema; refer to the `$defs` blocks for shape and constraints.
+Optional fields (`session_id`, `task_id`, `tool_choice`) are documented in the schema; refer to the `$defs` blocks for shape and constraints. `session_id` and `task_id` align with A2A's `contextId`/`taskId` — see `docs/agent-protocol.md`. `task_id` was added as an additive v1 field; when a caller omits it, clawctl derives a default from the call's trace-id.
 
 ## Versioning policy
 

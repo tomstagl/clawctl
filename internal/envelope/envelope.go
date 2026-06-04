@@ -60,6 +60,7 @@ type ToolRequest struct {
 	Kind            string `json:"kind"`
 	Agent           string `json:"agent"`
 	SessionID       string `json:"session_id,omitempty"`
+	TaskID          string `json:"task_id,omitempty"`
 	Traceparent     string `json:"traceparent"`
 	Input           Input  `json:"input"`
 	ToolChoice      string `json:"tool_choice,omitempty"`
@@ -73,6 +74,7 @@ type ToolResponse struct {
 	Kind            string      `json:"kind"`
 	Agent           string      `json:"agent"`
 	SessionID       string      `json:"session_id,omitempty"`
+	TaskID          string      `json:"task_id,omitempty"`
 	Traceparent     string      `json:"traceparent"`
 	Input           Input       `json:"input"`
 	ToolChoice      string      `json:"tool_choice,omitempty"`
@@ -90,6 +92,7 @@ type ToolStreamChunk struct {
 	Kind            string      `json:"kind"`
 	Agent           string      `json:"agent"`
 	SessionID       string      `json:"session_id,omitempty"`
+	TaskID          string      `json:"task_id,omitempty"`
 	Traceparent     string      `json:"traceparent"`
 	Index           int         `json:"index"`
 	Delta           Delta       `json:"delta"`
@@ -105,6 +108,7 @@ type ToolError struct {
 	Kind            string         `json:"kind"`
 	Agent           string         `json:"agent,omitempty"`
 	SessionID       string         `json:"session_id,omitempty"`
+	TaskID          string         `json:"task_id,omitempty"`
 	Traceparent     string         `json:"traceparent"`
 	Code            string         `json:"code"`
 	Message         string         `json:"message"`

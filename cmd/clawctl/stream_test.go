@@ -252,12 +252,13 @@ func TestRunStream_ByteExactNDJSON(t *testing.T) {
 	}
 	tp := probe.Traceparent
 
-	const tpl = `{"envelope_version":"1","kind":"tool_stream_chunk","agent":"openclaw/default","traceparent":"__TP__","index":0,"delta":{"content":"Hello "},"finish_reason":null}
-{"envelope_version":"1","kind":"tool_stream_chunk","agent":"openclaw/default","traceparent":"__TP__","index":1,"delta":{"content":"streamed "},"finish_reason":null}
-{"envelope_version":"1","kind":"tool_stream_chunk","agent":"openclaw/default","traceparent":"__TP__","index":2,"delta":{"content":"world."},"finish_reason":null}
-{"envelope_version":"1","kind":"tool_response","agent":"openclaw/default","traceparent":"__TP__","input":{"role":"user","content":"say hi"},"output":"Hello streamed world.","redactions":[],"usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10},"finish_reason":"stop"}
+	const tpl = `{"envelope_version":"1","kind":"tool_stream_chunk","agent":"openclaw/default","task_id":"__TASK__","traceparent":"__TP__","index":0,"delta":{"content":"Hello "},"finish_reason":null}
+{"envelope_version":"1","kind":"tool_stream_chunk","agent":"openclaw/default","task_id":"__TASK__","traceparent":"__TP__","index":1,"delta":{"content":"streamed "},"finish_reason":null}
+{"envelope_version":"1","kind":"tool_stream_chunk","agent":"openclaw/default","task_id":"__TASK__","traceparent":"__TP__","index":2,"delta":{"content":"world."},"finish_reason":null}
+{"envelope_version":"1","kind":"tool_response","agent":"openclaw/default","task_id":"__TASK__","traceparent":"__TP__","input":{"role":"user","content":"say hi"},"output":"Hello streamed world.","redactions":[],"usage":{"input_tokens":7,"output_tokens":3,"total_tokens":10},"finish_reason":"stop"}
 `
 	want := strings.ReplaceAll(tpl, "__TP__", tp)
+	want = strings.ReplaceAll(want, "__TASK__", probe.TaskID)
 	if got := stdout.String(); got != want {
 		t.Errorf("byte-exact NDJSON mismatch\n got:\n%s\nwant:\n%s", got, want)
 	}

@@ -165,6 +165,7 @@ func runMsg(ctx context.Context, cfg config.Config, args []string, stdin io.Read
 		Kind:            envelope.KindToolResponse,
 		Agent:           "openclaw/" + agent,
 		SessionID:       flags.session,
+		TaskID:          tp.TraceID,
 		Traceparent:     tp.String(),
 		Input:           envelope.Input{Role: "user", Content: text},
 		Output:          r.Text,
