@@ -6,7 +6,7 @@ This doc is the one-step path: how to register, what envs are needed, what `tool
 
 ## Prerequisites
 
-- The typed `clawctl` binary on `PATH` (`brew install`, `curl | sh`, or `go build ./cmd/clawctl` from this repo).
+- The typed `clawctl` binary on `PATH` (the `install.sh` curl one-liner, or `go build ./cmd/clawctl` from this repo).
 - `CLAWCTL_HOST` set to the gateway URL.
 - A bearer token stored in macOS Keychain under `openclaw-gateway-token` (or whatever `CLAWCTL_KEYCHAIN_SERVICE` points at).
 - The gateway returning at least one `openclaw/<slug>` entry in `/v1/models` — `clawctl mcp` exits 1 with `ErrNoAgents` if the response is empty after stripping the prefix, because an MCP server with zero tools is almost always a misconfiguration (wrong host, missing auth) rather than a legitimate state.

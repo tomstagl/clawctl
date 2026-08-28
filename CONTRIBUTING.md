@@ -36,7 +36,6 @@ The CI `smoke-static` job runs only `bash -n` (syntax) and `shellcheck` (lint) o
 
 ## Releasing
 
-1. Bump the version in the script header comment.
-2. Tag: `git tag v0.X.0 && git push --tags`.
-3. The `oc-release-cutter` agent (or a maintainer manually) drafts release notes from the commits since the previous tag.
-4. Update the Homebrew formula's `url` and `sha256`.
+1. Tag: `git tag v0.X.0 && git push --tags`. `.github/workflows/release.yml` builds the four platform binaries, generates `SHA256SUMS`, and publishes a GitHub Release — the Go binary's version is stamped at build time via `-ldflags "-X main.version=${GITHUB_REF_NAME}"`, nothing to hand-bump there.
+2. Bump the version in `.claude-plugin/plugin.json`.
+3. Add a `CHANGELOG.md` entry.
