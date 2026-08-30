@@ -76,3 +76,31 @@ Initial production release of `clawctl` — a typed Go binary wrapping the openc
 - Linux smoke test (`smoke-static` job) runs `bash -n` and `shellcheck` on `test/smoke.sh` on every PR.
 - `test/smoke.sh` gains `--no-network` flag: skips all live-gateway tests when `CLAWCTL_HOST` is unset.
 - Cross-compile matrix (`darwin/{arm64,amd64}`, `linux/{arm64,amd64}`) verified clean in `release.yml`.
+
+## v0.2.4
+
+Tagged 2026-05-23; never released — no GitHub release was published and no artifacts were built for this tag.
+
+- The Claude Code plugin ships a `clawctl` skill (`skills/clawctl/SKILL.md`) covering every command, when to prefer HTTP over SSH, output formats, env vars, and exit codes; `install/install.sh` now also fetches the skill to `~/.claude/skills/clawctl/SKILL.md` and registers the `clawctl` MCP server at user scope.
+
+## v0.2.3
+
+- `clawctl cli`'s default `clawctl-remote` install path changed from `/usr/local/bin/clawctl-remote` to `~/.local/bin/clawctl-remote`, so the auto-install introduced in v0.2.1 no longer needs `sudo` on either macOS or Linux out of the box.
+
+## v0.2.2
+
+- `clawctl cli`'s auto-install of `clawctl-remote` (added in v0.2.1) no longer requires `sudo`: it creates the target directory first and installs with plain `install`, so a user-writable path set via `CLAWCTL_REMOTE_PATH` works without elevated privileges.
+
+## v0.2.1
+
+- `clawctl cli` now installs or updates `clawctl-remote` on the gateway host automatically over SSH when it is missing or out of date, removing the manual install step. The install path can be overridden with `CLAWCTL_REMOTE_PATH`.
+
+## v0.2.0
+
+Renames the SSH-side helper binary from `oc-remote` to `clawctl-remote` to match the wrapper's name; behavior is unchanged.
+
+### Distribution
+
+- `clawctl cli` now probes for and invokes `clawctl-remote` (formerly `oc-remote`) at `/usr/local/bin/clawctl-remote`; the missing-binary remediation message and install snippet in `README.md` were updated to match.
+- README setup now leads with a `~/.config/clawctl/env` file convention for host-specific values (`CLAWCTL_HOST`, `CLAWCTL_SSH_HOST`, `CLAWCTL_JAEGER_UI`), sourced from the shell profile instead of committed.
+- Fixed the documented MCP registration command, which referenced flags (`--command`/`--args`) that no longer exist; the correct form is `claude mcp add clawctl -- clawctl mcp`.
