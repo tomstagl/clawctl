@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.3.1
+
+Documentation updates, release workflow hardening, and MCP server configuration support.
+
+### Fixed
+
+- fix(release): drop needless checkout from release job, extend artifact retention (#5)
+
+### Changed
+
+- chore: add Dynatrace MCP server config for CCR fleet leads (#6)
+- Backfill v0.2.4 release artifacts and draft notes (issue #7) (#8)
+
+### Internal
+
+- docs: remove broken Homebrew install references (#10)
+
 ## v0.3.0
 
 Robustness hardening, doc-drift fixes, and incremental alignment of the tool envelope with the A2A (Agent2Agent) standard.
