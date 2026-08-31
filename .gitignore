@@ -16,3 +16,13 @@
 # LC_UUID load command` failures on some macOS hosts).
 /.test-bin/
 
+# Compiled binary, previously committed by mistake (issue #14).
+/clawctl-local
+
+# Private ralph agent-loop harness and its scratch state — not part of the
+# public clawctl tool, shouldn't ship to every clone (issue #14).
+/ralph.sh
+/prompt.md
+/progress.txt
+/.last-branch
+
