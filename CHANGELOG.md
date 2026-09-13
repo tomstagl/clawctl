@@ -12,10 +12,12 @@ Documentation updates, release workflow hardening, and MCP server configuration 
 
 - chore: add Dynatrace MCP server config for CCR fleet leads (#6)
 - Backfill v0.2.4 release artifacts and draft notes (issue #7) (#8)
+- chore: untrack committed binary and private agent-harness scratch files (#14) (#15)
 
 ### Internal
 
 - docs: remove broken Homebrew install references (#10)
+- docs(changelog): backfill v0.2.0-v0.2.4 entries (#13)
 
 ## v0.3.0
 
