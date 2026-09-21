@@ -2,7 +2,7 @@
 
 ## v0.3.1
 
-Documentation updates, release workflow hardening, and MCP server configuration support.
+Documentation updates, release workflow hardening, MCP server configuration support, and CI concurrency guards.
 
 ### Fixed
 
@@ -18,6 +18,8 @@ Documentation updates, release workflow hardening, and MCP server configuration 
 
 - docs: remove broken Homebrew install references (#10)
 - docs(changelog): backfill v0.2.0-v0.2.4 entries (#13)
+- chore(changelog): add missing commits to v0.3.1 release notes (#16)
+- ci: add concurrency guard, gate macOS install-smoke leg on release (#19)
 
 ## v0.3.0
 
