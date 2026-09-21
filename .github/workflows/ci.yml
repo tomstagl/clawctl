@@ -53,6 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       has_release: ${{ steps.check.outputs.has_release }}
+      run_macos: ${{ steps.decide.outputs.run_macos }}
     steps:
       - name: Check for published releases
         id: check
@@ -65,13 +66,34 @@ jobs:
           else
             echo "has_release=true" >> "$GITHUB_OUTPUT"
           fi
+      # has_release is repo-wide ("has anything ever shipped") and only grows
+      # more true over time, so once a repo has one release it no longer
+      # distinguishes "worth testing on macOS" from "routine PR". On
+      # pull_request, only run the macOS leg when the diff actually touches
+      # install/release-sensitive surface; push (merges to main) always gets
+      # the full matrix since those are infrequent.
+      - name: Decide whether the macOS leg is worth its cost
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "run_macos=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files=$(gh pr view "${{ github.event.pull_request.number }}" --repo "$GITHUB_REPOSITORY" --json files --jq '.files[].path')
+          if echo "$files" | grep -Eq '^(install/|\.github/workflows/(release|ci)\.yml|cmd/clawctl/main\.go|test/(plugin-manifest|install-resolver)\.sh)'; then
+            echo "run_macos=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_macos=false" >> "$GITHUB_OUTPUT"
+          fi
 
   install-smoke:
     needs: release-check
     runs-on: ${{ matrix.os }}
     strategy:
       matrix:
-        os: ${{ fromJSON(needs.release-check.outputs.has_release == 'true' && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
+        os: ${{ fromJSON(needs.release-check.outputs.has_release == 'true' && needs.release-check.outputs.run_macos == 'true' && '["ubuntu-latest","macos-latest"]' || '["ubuntu-latest"]') }}
     steps:
       - uses: actions/checkout@v4
       - name: Skip (no release published yet)
