@@ -15,6 +15,7 @@ Documentation updates, release workflow hardening, MCP server configuration supp
 - chore: untrack committed binary and private agent-harness scratch files (#14) (#15)
 
 ### Internal
+- ci(release): attach artifacts to an existing release instead of failing (#23)
 
 - docs: remove broken Homebrew install references (#10)
 - docs(changelog): backfill v0.2.0-v0.2.4 entries (#13)
